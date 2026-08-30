@@ -2,6 +2,9 @@ package com.example.translation
 
 import android.graphics.Bitmap
 import android.graphics.RectF
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -12,31 +15,79 @@ data class DetectedTextBox(
 )
 
 class OCRManager {
+    private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
     suspend fun detectText(bitmap: Bitmap): List<DetectedTextBox> {
         return withContext(Dispatchers.Default) {
-            // Simulated OCR text region detector with sample layout heuristics
-            // Ready to plug in ML Kit TextRecognition or Tesseract
-            val results = mutableListOf<DetectedTextBox>()
-            val width = bitmap.width.toFloat()
-            val height = bitmap.height.toFloat()
+            try {
+                val image = InputImage.fromBitmap(bitmap, 0)
+                val task = textRecognizer.process(image)
 
-            // In actual game dialogue regions (lower third for visual novels & RPGs)
-            val dialogueBox = RectF(
-                width * 0.05f,
-                height * 0.65f,
-                width * 0.95f,
-                height * 0.92f
-            )
+                val results = mutableListOf<DetectedTextBox>()
+                
+                // Use task result synchronously (blocking wait in coroutine)
+                var visionText: com.google.mlkit.vision.text.Text? = null
+                var error: Exception? = null
 
-            results.add(
-                DetectedTextBox(
-                    text = "勇者よ、目覚めの時が来た。(Hero, the time of awakening has come.)",
-                    boundingBox = dialogueBox,
-                    confidence = 0.94f
-                )
-            )
+                task.addOnSuccessListener { text ->
+                    visionText = text
+                }.addOnFailureListener { e ->
+                    error = e
+                }
 
-            results
+                // Wait for task completion (simplified - in production use proper async handling)
+                val maxWait = 5000L
+                val startTime = System.currentTimeMillis()
+                while (visionText == null && error == null && System.currentTimeMillis() - startTime < maxWait) {
+                    Thread.sleep(10)
+                }
+
+                if (visionText != null) {
+                    for (block in visionText!!.textBlocks) {
+                        for (line in block.lines) {
+                            val text = line.text.trim()
+                            if (text.isNotEmpty()) {
+                                val boundingBox = line.boundingBox?.let { box ->
+                                    RectF(
+                                        box.left.toFloat(),
+                                        box.top.toFloat(),
+                                        box.right.toFloat(),
+                                        box.bottom.toFloat()
+                                    )
+                                } ?: RectF()
+
+                                // Calculate confidence from recognition confidence
+                                var confidence = 0.85f
+                                for (element in line.elements) {
+                                    confidence = maxOf(confidence, element.confidence)
+                                }
+
+                                results.add(
+                                    DetectedTextBox(
+                                        text = text,
+                                        boundingBox = boundingBox,
+                                        confidence = confidence
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                image.close()
+                results
+            } catch (e: Exception) {
+                // Return empty list on error instead of crashing
+                emptyList()
+            }
+        }
+    }
+
+    fun close() {
+        try {
+            textRecognizer.close()
+        } catch (e: Exception) {
+            // Ignore cleanup errors
         }
     }
 }
