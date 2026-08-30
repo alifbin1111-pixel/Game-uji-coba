@@ -28,12 +28,11 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Ensure Debug Keystore Exists
+      - name: Ensure Root Debug Keystore Exists
         run: |
-          mkdir -p ~/.android
-          if [ ! -f ~/.android/debug.keystore ]; then
+          if [ ! -f ./debug.keystore ]; then
             keytool -genkey -v \
-              -keystore ~/.android/debug.keystore \
+              -keystore ./debug.keystore \
               -storepass android \
               -alias androiddebugkey \
               -keypass android \
@@ -42,14 +41,21 @@ jobs:
               -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
           fi
+          test -f ./debug.keystore
+
+      - name: Verify Debug Keystore
+        run: |
+          pwd
+          ls -la ./debug.keystore
+          keytool -list -keystore ./debug.keystore -storepass android
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug --stacktrace --no-daemon
 
       - name: Verify APK Created
         run: |
-          if [ ! -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            echo "Error: app/build/outputs/apk/debug/app-debug.apk not found!"
+          if [ ! -s app/build/outputs/apk/debug/app-debug.apk ]; then
+            echo "Error: app/build/outputs/apk/debug/app-debug.apk not found or is empty!"
             exit 1
           fi
 
