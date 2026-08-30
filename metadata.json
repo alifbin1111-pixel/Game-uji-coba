@@ -1,0 +1,6 @@
+{
+  "name": "GameBridge",
+  "description": "Multi-engine game launcher, compatibility runtime & real-time translation tool for Android",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
