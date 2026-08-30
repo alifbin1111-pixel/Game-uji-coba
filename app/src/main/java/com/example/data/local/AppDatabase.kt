@@ -18,7 +18,7 @@ import com.example.model.TranslationEntity
         ControllerProfileEntity::class,
         SaveBackupEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

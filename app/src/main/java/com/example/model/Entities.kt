@@ -55,18 +55,18 @@ data class TranslationEntity(
 data class ControllerProfileEntity(
     @PrimaryKey val id: String,
     val name: String,
-    val opacity: Float = 0.65f,
+    val opacity: Float = 0.70f,
     val scale: Float = 1.0f,
     val dpadX: Float = 0.08f,
-    val dpadY: Float = 0.68f,
+    val dpadY: Float = 0.65f,
     val btnAX: Float = 0.88f,
-    val btnAY: Float = 0.72f,
+    val btnAY: Float = 0.70f,
     val btnBX: Float = 0.80f,
     val btnBY: Float = 0.82f,
     val btnXX: Float = 0.80f,
-    val btnXY: Float = 0.62f,
+    val btnXY: Float = 0.58f,
     val btnYX: Float = 0.72f,
-    val btnYY: Float = 0.72f,
+    val btnYY: Float = 0.70f,
     val btnLX: Float = 0.10f,
     val btnLY: Float = 0.38f,
     val btnRX: Float = 0.88f,
@@ -78,7 +78,13 @@ data class ControllerProfileEntity(
     val analogX: Float = 0.18f,
     val analogY: Float = 0.78f,
     val analogEnabled: Boolean = false,
-    val hapticFeedback: Boolean = true
+    val hapticFeedback: Boolean = true,
+    val controllerTheme: String = "SOPHISTICATED", // SOPHISTICATED, CYBER_NEON, RETRO_ARCADE, CRYSTAL_GLASS
+    val dpadMode: String = "CROSS", // CROSS, ANALOG, SPLIT
+    val showShoulderL2R2: Boolean = false,
+    val showTurbo: Boolean = true,
+    val showQuickSave: Boolean = true,
+    val buttonSpacing: Float = 1.0f
 )
 
 @Entity(tableName = "save_backups")

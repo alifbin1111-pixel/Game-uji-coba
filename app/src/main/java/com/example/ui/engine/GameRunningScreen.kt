@@ -261,21 +261,70 @@ fun GameRunningScreen(
             VirtualGamepadOverlay(
                 profile = activeProfile,
                 onButtonPress = { btn ->
-                    val jsCall = when (btn) {
-                        "UP" -> "if(window.GameBridgeController) window.GameBridgeController.pressUp(); else window.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowUp'}));"
-                        "DOWN" -> "if(window.GameBridgeController) window.GameBridgeController.pressDown(); else window.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowDown'}));"
-                        "LEFT" -> "if(window.GameBridgeController) window.GameBridgeController.pressLeft(); else window.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowLeft'}));"
-                        "RIGHT" -> "if(window.GameBridgeController) window.GameBridgeController.pressRight(); else window.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowRight'}));"
-                        "A" -> "if(window.GameBridgeController) window.GameBridgeController.pressA(); else window.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter'}));"
-                        "B" -> "if(window.GameBridgeController) window.GameBridgeController.pressB(); else window.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape'}));"
-                        "X" -> "if(window.GameBridgeController) window.GameBridgeController.pressX(); else window.dispatchEvent(new KeyboardEvent('keydown', {key:'x'}));"
-                        "Y" -> "if(window.GameBridgeController) window.GameBridgeController.pressY(); else window.dispatchEvent(new KeyboardEvent('keydown', {key:'y'}));"
-                        "START" -> "if(window.GameBridgeController) window.GameBridgeController.pressA();"
-                        "SELECT" -> "if(window.GameBridgeController) window.GameBridgeController.pressB();"
+                    when (btn) {
+                        "QUICK_SAVE" -> {
+                            scope.launch {
+                                viewModel.createSaveBackup(game.id, "Quick Save ${System.currentTimeMillis()}")
+                            }
+                        }
+                        "TURBO" -> {
+                            webViewRef?.evaluateJavascript(
+                                "if(window.GameBridgeSpeedMultiplier === 4) window.GameBridgeSpeedMultiplier = 1; else window.GameBridgeSpeedMultiplier = 4; console.log('Turbo toggled');",
+                                null
+                            )
+                        }
+                        else -> {
+                            val key = when (btn) {
+                                "UP" -> "ArrowUp"
+                                "DOWN" -> "ArrowDown"
+                                "LEFT" -> "ArrowLeft"
+                                "RIGHT" -> "ArrowRight"
+                                "A" -> "Enter"
+                                "B" -> "Escape"
+                                "X" -> "x"
+                                "Y" -> "Shift"
+                                "L1", "L" -> "PageUp"
+                                "R1", "R" -> "PageDown"
+                                "L2" -> "q"
+                                "R2" -> "w"
+                                "START" -> "Enter"
+                                "SELECT" -> "Escape"
+                                else -> ""
+                            }
+                            if (key.isNotEmpty()) {
+                                val js = """
+                                    if(window.GameBridgeController && window.GameBridgeController.press${btn}) {
+                                        window.GameBridgeController.press${btn}();
+                                    } else {
+                                        window.dispatchEvent(new KeyboardEvent('keydown', {key:'$key', code:'$key', bubbles:true}));
+                                    }
+                                """.trimIndent()
+                                webViewRef?.evaluateJavascript(js, null)
+                            }
+                        }
+                    }
+                },
+                onButtonRelease = { btn ->
+                    val key = when (btn) {
+                        "UP" -> "ArrowUp"
+                        "DOWN" -> "ArrowDown"
+                        "LEFT" -> "ArrowLeft"
+                        "RIGHT" -> "ArrowRight"
+                        "A" -> "Enter"
+                        "B" -> "Escape"
+                        "X" -> "x"
+                        "Y" -> "Shift"
+                        "L1", "L" -> "PageUp"
+                        "R1", "R" -> "PageDown"
+                        "L2" -> "q"
+                        "R2" -> "w"
+                        "START" -> "Enter"
+                        "SELECT" -> "Escape"
                         else -> ""
                     }
-                    if (jsCall.isNotBlank()) {
-                        webViewRef?.evaluateJavascript(jsCall, null)
+                    if (key.isNotEmpty()) {
+                        val js = "window.dispatchEvent(new KeyboardEvent('keyup', {key:'$key', code:'$key', bubbles:true}));"
+                        webViewRef?.evaluateJavascript(js, null)
                     }
                 }
             )
