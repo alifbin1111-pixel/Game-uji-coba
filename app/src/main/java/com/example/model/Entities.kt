@@ -29,14 +29,23 @@ data class GameSettingsEntity(
     val virtualControllerEnabled: Boolean = true,
     val controllerProfileId: String = "default",
     val audioVolume: Float = 1.0f,
-    val translationEnabled: Boolean = false,
+    val translationEnabled: Boolean = true,
+    val translateUi: Boolean = true,
+    val translateDialog: Boolean = true,
+    val translateMenu: Boolean = true,
+    val translateBattleUi: Boolean = true,
+    val translationCacheEnabled: Boolean = true,
     val ocrEnabled: Boolean = false,
     val sourceLanguage: String = "ja",
     val targetLanguage: String = "id",
-    val translationProvider: String = "GEMINI",
+    val translationProvider: String = "LOCAL",
+    val overlayEnabled: Boolean = false,
+    val overlayOpacity: Float = 0.85f,
+    val overlayFontSize: Float = 14f,
+    val overlayPosition: String = "AUTO",
     val performanceMode: String = "BALANCED",
     val aspectRatio: String = "16:9",
-    val orientation: String = "LANDSCAPE"
+    val orientation: String = "AUTO"
 )
 
 @Entity(tableName = "translations")

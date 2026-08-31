@@ -68,10 +68,43 @@ class SaveManager(private val context: Context, private val repository: GameRepo
     }
 
     suspend fun restoreBackup(backupId: String): Boolean = withContext(Dispatchers.IO) {
-        // Look up backup entity
-        val backupFile: File? = null
-        // Implementation extracts the backup zip back into the target game folder
-        true
+        val backup = repository.getBackupById(backupId) ?: return@withContext false
+        val backupFile = File(backup.filePath)
+        if (!backupFile.exists() || backupFile.length() == 0L) return@withContext false
+
+        val game = repository.getGameById(backup.gameId) ?: return@withContext false
+        val targetDir = File(game.gamePath)
+        if (!targetDir.exists()) targetDir.mkdirs()
+
+        try {
+            java.util.zip.ZipInputStream(java.io.BufferedInputStream(backupFile.inputStream())).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    val destFile = File(targetDir, entry.name)
+                    // Zip Slip protection
+                    if (!destFile.canonicalPath.startsWith(targetDir.canonicalPath)) {
+                        throw SecurityException("Zip entry is outside target directory: ${entry.name}")
+                    }
+                    if (entry.isDirectory) {
+                        destFile.mkdirs()
+                    } else {
+                        destFile.parentFile?.mkdirs()
+                        java.io.FileOutputStream(destFile).use { fos ->
+                            val buffer = ByteArray(8192)
+                            var len: Int
+                            while (zis.read(buffer).also { len = it } > 0) {
+                                fos.write(buffer, 0, len)
+                            }
+                        }
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun zipDir(dir: File, baseName: String, zos: ZipOutputStream): Long {

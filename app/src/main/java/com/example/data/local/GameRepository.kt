@@ -48,6 +48,7 @@ class GameRepository(private val db: AppDatabase) {
 
     // Backups
     fun getBackupsForGame(gameId: String): Flow<List<SaveBackupEntity>> = db.saveBackupDao().getBackupsForGame(gameId)
+    suspend fun getBackupById(id: String): SaveBackupEntity? = db.saveBackupDao().getBackupById(id)
     suspend fun insertBackup(backup: SaveBackupEntity) = db.saveBackupDao().insertBackup(backup)
     suspend fun deleteBackup(id: String) = db.saveBackupDao().deleteBackupById(id)
 }

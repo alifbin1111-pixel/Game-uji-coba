@@ -2,6 +2,7 @@ package com.example.ui.detail
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
@@ -29,6 +31,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -46,6 +50,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -64,11 +69,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.CompatibilityRating
 import com.example.model.EngineType
 import com.example.model.GameSettingsEntity
+import com.example.model.RuntimeState
 import com.example.runtime.RuntimeManager
 import com.example.ui.theme.DeepVioletOnPrimary
 import com.example.ui.theme.LavenderPrimary
@@ -97,7 +104,8 @@ fun GameDetailScreen(
     viewModel: GameBridgeViewModel,
     onBack: () -> Unit,
     onLaunchGame: (String) -> Unit,
-    onOpenControllerEditor: () -> Unit
+    onOpenControllerEditor: () -> Unit,
+    onOpenRuntimes: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -106,12 +114,13 @@ fun GameDetailScreen(
     val settingsState by viewModel.getSettingsFlow(gameId).collectAsState(initial = null)
     val settings = settingsState ?: GameSettingsEntity(gameId = gameId)
     val backups by viewModel.getBackupsForGame(gameId).collectAsState(initial = emptyList())
+    val launchDialog by viewModel.launchDialog.collectAsState()
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val tabs = listOf("Settings", "Translation", "Controller", "Saves", "Diagnostics")
 
     val runtime = remember(game) {
-        game?.let { RuntimeManager.getRuntimeForGame(it) } ?: RuntimeManager.availableRuntimes.first()
+        game?.let { RuntimeManager.getRuntimeForGame(it) } ?: RuntimeManager.providers.first()
     }
     val diagnostic = remember(game) {
         game?.let { runtime.getDiagnostic(context, it) }
@@ -174,9 +183,11 @@ fun GameDetailScreen(
                                 Text(
                                     text = when (engine) {
                                         EngineType.RENPY -> "🎭"
-                                        EngineType.HTML5 -> "🕹️"
+                                        EngineType.HTML -> "🕹️"
                                         EngineType.GODOT -> "⚡"
                                         EngineType.UNITY -> "🏔️"
+                                        EngineType.ANDROID_APK -> "📱"
+                                        EngineType.WINDOWS_UNKNOWN -> "💻"
                                         else -> "👾"
                                     },
                                     fontSize = 30.sp
@@ -197,12 +208,13 @@ fun GameDetailScreen(
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(6.dp))
-                                            .background(SophisticatedBadge)
+                                            .background(Color(engine.badgeColor).copy(alpha = 0.2f))
+                                            .border(1.dp, Color(engine.badgeColor).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
                                             .padding(horizontal = 8.dp, vertical = 2.dp)
                                     ) {
                                         Text(
                                             text = engine.displayName.uppercase(),
-                                            color = LavenderPrimary,
+                                            color = Color(engine.badgeColor),
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -218,31 +230,84 @@ fun GameDetailScreen(
                                 Spacer(Modifier.height(4.dp))
                                 val sizeMB = game.fileSizeBytes / (1024 * 1024.0)
                                 Text(
-                                    text = "Size: ${String.format(Locale.getDefault(), "%.1f MB", sizeMB)} • Accuracy: ${(game.confidence * 100).toInt()}%",
+                                    text = "Size: ${String.format(Locale.getDefault(), "%.1f MB", sizeMB)} • Match: ${(game.confidence * 100).toInt()}%",
                                     color = TextSecondary.copy(alpha = 0.8f),
                                     fontSize = 11.sp
                                 )
                             }
                         }
 
-                        Spacer(Modifier.height(18.dp))
+                        Spacer(Modifier.height(14.dp))
 
-                        // Launch Button
+                        // Platform & Runtime Info Strip
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(SophisticatedSurfaceVariant)
+                                .border(1.dp, SophisticatedBorder, RoundedCornerShape(12.dp))
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Platform:", color = TextSecondary, fontSize = 11.sp)
+                                    Text(diagnostic?.detectedArchitecture ?: "Standard", color = TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text("Required Runtime:", color = TextSecondary, fontSize = 11.sp)
+                                    Text(runtime.name, color = LavenderPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
+                        val isPlayable = runtime.isPlayableDirectly && runtime.canRunDirectly(game)
+                        val isApk = game.executablePath.endsWith(".apk", ignoreCase = true)
+
+                        // Launch / Install / Diagnostics Action Button
                         Button(
-                            onClick = { onLaunchGame(game.id) },
+                            onClick = { viewModel.handlePlayClick(game, onDirectLaunch = onLaunchGame) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(50.dp)
                                 .testTag("btn_detail_launch_game"),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = LavenderPrimary,
+                                containerColor = when {
+                                    isPlayable && !isApk -> LavenderPrimary
+                                    isPlayable && isApk -> SoftMint
+                                    else -> SoftAmber
+                                },
                                 contentColor = DeepVioletOnPrimary
                             ),
                             shape = RoundedCornerShape(16.dp)
                         ) {
-                            Icon(Icons.Default.PlayArrow, null, tint = DeepVioletOnPrimary, modifier = Modifier.size(24.dp))
+                            Icon(
+                                imageVector = when {
+                                    isPlayable && !isApk -> Icons.Default.PlayArrow
+                                    isPlayable && isApk -> Icons.Default.Android
+                                    else -> Icons.Default.Warning
+                                },
+                                contentDescription = null,
+                                tint = DeepVioletOnPrimary,
+                                modifier = Modifier.size(24.dp)
+                            )
                             Spacer(Modifier.width(8.dp))
-                            Text("LAUNCH GAME", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(
+                                text = when {
+                                    isPlayable && !isApk -> "PLAY GAME"
+                                    isPlayable && isApk -> "LAUNCH / INSTALL APK"
+                                    else -> "RUNTIME REQUIRED"
+                                },
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
                         }
                     }
                 }
@@ -302,6 +367,82 @@ fun GameDetailScreen(
                 }
             }
         }
+    }
+
+    // Honest Runtime Dialog
+    if (launchDialog != null) {
+        val dialog = launchDialog!!
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissLaunchDialog() },
+            icon = {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(SoftAmber.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Warning, null, tint = SoftAmber, modifier = Modifier.size(28.dp))
+                }
+            },
+            title = {
+                Text(
+                    text = "Runtime Belum Tersedia",
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = dialog.message,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 13.sp
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(SophisticatedSurfaceVariant)
+                            .border(1.dp, SophisticatedBorder, RoundedCornerShape(12.dp))
+                            .padding(12.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Engine: ${dialog.engineName}", color = LavenderPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("Dibutuhkan: ${dialog.runtimeRequired}", color = SoftMint, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.height(4.dp))
+                            Text(dialog.technicalDetails, color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.dismissLaunchDialog()
+                        onOpenRuntimes()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LavenderPrimary,
+                        contentColor = DeepVioletOnPrimary
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Buka Runtime Manager", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissLaunchDialog() }) {
+                    Text("Tutup", color = TextSecondary)
+                }
+            },
+            containerColor = SophisticatedCard,
+            shape = RoundedCornerShape(24.dp)
+        )
     }
 }
 
@@ -372,19 +513,32 @@ fun GameSettingsTab(
             }
 
             // Orientation
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Screen Orientation", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SophisticatedBadge)
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Screen Orientation Mode", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(settings.orientation, color = LavenderPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    listOf("AUTO" to "Auto Sensor", "LANDSCAPE" to "Landscape", "PORTRAIT" to "Portrait").forEach { (mode, label) ->
+                        val isSelected = settings.orientation.equals(mode, ignoreCase = true)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) LavenderPrimary else SophisticatedSurfaceVariant)
+                                .border(1.dp, if (isSelected) LavenderPrimary else SophisticatedBorder, RoundedCornerShape(10.dp))
+                                .clickable { onUpdate(settings.copy(orientation = mode)) }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) DeepVioletOnPrimary else TextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -403,17 +557,17 @@ fun TranslationSettingsTab(
         shape = RoundedCornerShape(20.dp)
     ) {
         Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("Real-Time Translation Settings", color = LavenderPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text("Real-Time MTool Localization Engine", color = LavenderPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
 
-            // Translation Toggle
+            // Master Live Translation Toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text("Enable Live Translation", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    Text("Extract dialogue text & translate in real-time", color = TextSecondary, fontSize = 11.sp)
+                    Text("Auto-hook canvas, menus, buttons & dialogue in real-time", color = TextSecondary, fontSize = 11.sp)
                 }
                 Switch(
                     checked = settings.translationEnabled,
@@ -422,15 +576,97 @@ fun TranslationSettingsTab(
                 )
             }
 
-            // OCR Scanning Toggle
+            // Granular Category Toggles
+            Text("Translation Scope & Targets", color = LavenderPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text("OCR Visual Text Scanner", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    Text("Extract bitmap text on non-standard engines", color = TextSecondary, fontSize = 11.sp)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Translate Gameplay UI & Buttons", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("Inventory, title buttons, character status, shop", color = TextSecondary, fontSize = 10.sp)
+                }
+                Switch(
+                    checked = settings.translateUi,
+                    onCheckedChange = { onUpdate(settings.copy(translateUi = it)) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = DeepVioletOnPrimary, checkedTrackColor = LavenderPrimary)
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Translate Story Dialog & Choices", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("Message box lines, branching narrative choices", color = TextSecondary, fontSize = 10.sp)
+                }
+                Switch(
+                    checked = settings.translateDialog,
+                    onCheckedChange = { onUpdate(settings.copy(translateDialog = it)) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = DeepVioletOnPrimary, checkedTrackColor = LavenderPrimary)
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Translate Menu & Commands", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("Pause menu, options, system tabs", color = TextSecondary, fontSize = 10.sp)
+                }
+                Switch(
+                    checked = settings.translateMenu,
+                    onCheckedChange = { onUpdate(settings.copy(translateMenu = it)) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = DeepVioletOnPrimary, checkedTrackColor = LavenderPrimary)
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Translate Battle UI & Actions", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("Attack, magic, guard, escape, battle logs", color = TextSecondary, fontSize = 10.sp)
+                }
+                Switch(
+                    checked = settings.translateBattleUi,
+                    onCheckedChange = { onUpdate(settings.copy(translateBattleUi = it)) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = DeepVioletOnPrimary, checkedTrackColor = LavenderPrimary)
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Offline Translation Cache", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("Persistent Room SQLite cache for zero latency", color = TextSecondary, fontSize = 10.sp)
+                }
+                Switch(
+                    checked = settings.translationCacheEnabled,
+                    onCheckedChange = { onUpdate(settings.copy(translationCacheEnabled = it)) },
+                    colors = SwitchDefaults.colors(checkedThumbColor = DeepVioletOnPrimary, checkedTrackColor = LavenderPrimary)
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("OCR Visual Text Scanner", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Text("Visual fallback scanner for non-standard bitmap graphics", color = TextSecondary, fontSize = 10.sp)
                 }
                 Switch(
                     checked = settings.ocrEnabled,
@@ -439,43 +675,82 @@ fun TranslationSettingsTab(
                 )
             }
 
-            // Language pair
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("Source ➔ Target Language", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    Text("Translate from Japanese to English / Indonesian", color = TextSecondary, fontSize = 11.sp)
-                }
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SophisticatedBadge)
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+            // Language pair selectors
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Source Language", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text("JA ➔ ID", color = LavenderPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    listOf("auto" to "Auto", "ja" to "Japanese", "en" to "English", "zh" to "Chinese", "ko" to "Korean").forEach { (code, name) ->
+                        val isSel = settings.sourceLanguage.equals(code, ignoreCase = true)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSel) LavenderPrimary else SophisticatedSurfaceVariant)
+                                .border(1.dp, if (isSel) LavenderPrimary else SophisticatedBorder, RoundedCornerShape(8.dp))
+                                .clickable { onUpdate(settings.copy(sourceLanguage = code)) }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(name, color = if (isSel) DeepVioletOnPrimary else TextPrimary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Target Language", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("id" to "Indonesian (ID)", "en" to "English (EN)").forEach { (code, name) ->
+                        val isSel = settings.targetLanguage.equals(code, ignoreCase = true)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSel) LavenderPrimary else SophisticatedSurfaceVariant)
+                                .border(1.dp, if (isSel) LavenderPrimary else SophisticatedBorder, RoundedCornerShape(8.dp))
+                                .clickable { onUpdate(settings.copy(targetLanguage = code)) }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(name, color = if (isSel) DeepVioletOnPrimary else TextPrimary, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
 
             // Engine Provider
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text("Translation Engine Provider", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    Text("Google Gemini AI / Rapid Translate", color = TextSecondary, fontSize = 11.sp)
-                }
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SophisticatedBadge)
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Translation Engine Provider", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(settings.translationProvider, color = LavenderPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    listOf("LOCAL" to "Offline Dict", "GOOGLE_FREE" to "Google Free", "GEMINI" to "Gemini AI").forEach { (id, label) ->
+                        val isSelected = settings.translationProvider == id
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) LavenderPrimary else SophisticatedSurfaceVariant)
+                                .border(1.dp, if (isSelected) LavenderPrimary else SophisticatedBorder, RoundedCornerShape(10.dp))
+                                .clickable { onUpdate(settings.copy(translationProvider = id)) }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) DeepVioletOnPrimary else TextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
         }

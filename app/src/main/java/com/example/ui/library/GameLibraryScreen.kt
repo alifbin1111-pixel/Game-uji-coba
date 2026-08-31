@@ -26,7 +26,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -39,6 +43,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -83,6 +88,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.EngineType
 import com.example.model.GameEntity
+import com.example.runtime.GameLauncher
+import com.example.runtime.GameRuntimeProvider
+import com.example.runtime.LaunchResult
+import com.example.runtime.RuntimeManager
 import com.example.ui.theme.DeepVioletOnPrimary
 import com.example.ui.theme.LavenderPrimary
 import com.example.ui.theme.LavenderVioletBrush
@@ -122,25 +131,41 @@ fun GameLibraryScreen(
     val selectedEngineFilter by viewModel.selectedEngineFilter.collectAsState()
     val isImporting by viewModel.isImporting.collectAsState()
     val statusMessage by viewModel.statusMessage.collectAsState()
+    val launchDialog by viewModel.launchDialog.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showRenameDialogForGame by remember { mutableStateOf<GameEntity?>(null) }
     var renameText by remember { mutableStateOf("") }
     var showImportMenu by remember { mutableStateOf(false) }
 
-    val zipLauncher = rememberLauncherForActivityResult(
+    // 1. Single File Picker (.zip, .exe, .apk, .html, .json, .pck, etc.)
+    val fileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
             try {
                 val input = context.contentResolver.openInputStream(it)
-                val fileName = it.lastPathSegment ?: "game_archive.zip"
+                val fileName = it.lastPathSegment?.substringAfterLast('/') ?: "game_file"
                 if (input != null) {
-                    viewModel.importZipFile(input, fileName)
+                    if (fileName.endsWith(".zip", ignoreCase = true)) {
+                        viewModel.importZipFile(input, fileName)
+                    } else {
+                        viewModel.importSingleFile(input, fileName)
+                    }
                 }
             } catch (e: Exception) {
-                // handle
+                // handle error
             }
+        }
+    }
+
+    // 2. Game Folder Picker (SAF Tree Document)
+    val folderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        uri?.let {
+            val folderName = it.lastPathSegment?.substringAfterLast(':')?.substringAfterLast('/') ?: "Game Folder"
+            viewModel.importFolderTree(it, folderName)
         }
     }
 
@@ -173,7 +198,7 @@ fun GameLibraryScreen(
                             .clip(CircleShape)
                             .background(SophisticatedCard)
                             .border(1.dp, SophisticatedBorder, CircleShape)
-                            .clickable { /* quick search or toggle */ },
+                            .clickable { /* quick search */ },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -231,7 +256,7 @@ fun GameLibraryScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
-                            .clickable { /* already here */ }
+                            .clickable { /* active */ }
                             .padding(vertical = 4.dp)
                             .testTag("nav_item_library")
                     ) {
@@ -258,11 +283,11 @@ fun GameLibraryScreen(
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { onOpenRuntimes() }
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .padding(vertical = 4.dp)
                             .testTag("nav_item_runtimes")
                     ) {
                         Icon(
-                            Icons.Default.Info,
+                            Icons.Default.Build,
                             contentDescription = "Runtimes",
                             tint = TextSecondary.copy(alpha = 0.7f),
                             modifier = Modifier.size(22.dp)
@@ -271,14 +296,14 @@ fun GameLibraryScreen(
                         Text("Runtimes", color = TextSecondary.copy(alpha = 0.7f), fontSize = 10.sp)
                     }
 
-                    // 3. Translate
+                    // 3. Translations
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { onOpenTranslationSettings() }
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                            .testTag("nav_item_translate")
+                            .padding(vertical = 4.dp)
+                            .testTag("nav_item_translation")
                     ) {
                         Icon(
                             Icons.Default.Translate,
@@ -296,7 +321,7 @@ fun GameLibraryScreen(
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
                             .clickable { onOpenSettings() }
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                            .padding(vertical = 4.dp)
                             .testTag("nav_item_settings")
                     ) {
                         Icon(
@@ -362,9 +387,10 @@ fun GameLibraryScreen(
                     "ALL" to "All Engines",
                     "RPG_MAKER" to "RPG Maker",
                     "RENPY" to "Ren'Py",
-                    "HTML5" to "HTML5",
+                    "UNITY" to "Unity",
                     "GODOT" to "Godot",
-                    "UNITY" to "Unity"
+                    "HTML" to "HTML5",
+                    "WINDOWS" to "Windows"
                 )
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -417,8 +443,8 @@ fun GameLibraryScreen(
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), color = LavenderPrimary)
                             Spacer(Modifier.width(16.dp))
                             Column {
-                                Text("Analyzing game package...", color = TextPrimary, fontWeight = FontWeight.Bold)
-                                Text("Extracting archive & detecting runtime signature...", color = TextSecondary, fontSize = 12.sp)
+                                Text("Scanning folder & detecting engine...", color = TextPrimary, fontWeight = FontWeight.Bold)
+                                Text("Analyzing file signatures, executables, and runtime compatibility...", color = TextSecondary, fontSize = 12.sp)
                             }
                         }
                     }
@@ -458,16 +484,15 @@ fun GameLibraryScreen(
                             items(recentGames, key = { it.id }) { game ->
                                 RecentGameCard(
                                     game = game,
-                                    onPlay = { onLaunchGame(game.id) },
+                                    onPlay = { viewModel.handlePlayClick(game, onDirectLaunch = onLaunchGame) },
                                     onSelect = { onSelectGame(game.id) }
                                 )
                             }
                         } else {
-                            // Default sample recent items preview
                             items(allGames.take(3), key = { "recent_${it.id}" }) { game ->
                                 RecentGameCard(
                                     game = game,
-                                    onPlay = { onLaunchGame(game.id) },
+                                    onPlay = { viewModel.handlePlayClick(game, onDirectLaunch = onLaunchGame) },
                                     onSelect = { onSelectGame(game.id) }
                                 )
                             }
@@ -532,7 +557,7 @@ fun GameLibraryScreen(
                             .border(1.dp, SophisticatedBorder, RoundedCornerShape(16.dp))
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
-                        Text("Sort: Recent", color = TextSecondary, fontSize = 11.sp)
+                        Text("Total: ${filteredGames.size}", color = TextSecondary, fontSize = 11.sp)
                     }
                 }
             }
@@ -550,17 +575,17 @@ fun GameLibraryScreen(
                             Icon(Icons.Default.Gamepad, null, tint = TextSecondary, modifier = Modifier.size(48.dp))
                             Spacer(Modifier.height(12.dp))
                             Text("No games found", color = TextPrimary, fontWeight = FontWeight.Bold)
-                            Text("Import a game ZIP archive or install sample games.", color = TextSecondary, fontSize = 12.sp)
+                            Text("Choose a game folder or file to scan and detect engine.", color = TextSecondary, fontSize = 12.sp)
                             Spacer(Modifier.height(16.dp))
                             Button(
-                                onClick = { viewModel.resetSampleGames() },
+                                onClick = { showImportMenu = true },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = LavenderPrimary,
                                     contentColor = DeepVioletOnPrimary
                                 ),
                                 shape = RoundedCornerShape(14.dp)
                             ) {
-                                Text("Load Sample Games", fontWeight = FontWeight.Bold)
+                                Text("Scan / Import Game", fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -570,7 +595,7 @@ fun GameLibraryScreen(
                 items(filteredGames, key = { it.id }) { game ->
                     GameListItem(
                         game = game,
-                        onPlay = { onLaunchGame(game.id) },
+                        onPlay = { viewModel.handlePlayClick(game, onDirectLaunch = onLaunchGame) },
                         onSelect = { onSelectGame(game.id) },
                         onToggleFavorite = { viewModel.toggleFavorite(game.id, game.isFavorite) },
                         onRename = {
@@ -584,25 +609,102 @@ fun GameLibraryScreen(
         }
     }
 
-    // Import Options Dialog
-    if (showImportMenu) {
+    // Honest Runtime Required Dialog
+    if (launchDialog != null) {
+        val dialog = launchDialog!!
         AlertDialog(
-            onDismissRequest = { showImportMenu = false },
-            title = { Text("Import New Game", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            onDismissRequest = { viewModel.dismissLaunchDialog() },
+            icon = {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(SoftAmber.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Warning, null, tint = SoftAmber, modifier = Modifier.size(28.dp))
+                }
+            },
+            title = {
+                Text(
+                    text = "Runtime Belum Tersedia",
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                    textAlign = TextAlign.Center
+                )
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "Choose a game package source to import into GameBridge:",
+                        text = dialog.message,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 13.sp
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(SophisticatedSurfaceVariant)
+                            .border(1.dp, SophisticatedBorder, RoundedCornerShape(12.dp))
+                            .padding(12.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Engine: ${dialog.engineName}", color = LavenderPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("Dibutuhkan: ${dialog.runtimeRequired}", color = SoftMint, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.height(4.dp))
+                            Text(dialog.technicalDetails, color = TextSecondary, fontSize = 11.sp, lineHeight = 15.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.dismissLaunchDialog()
+                        onOpenRuntimes()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = LavenderPrimary,
+                        contentColor = DeepVioletOnPrimary
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Lihat Status Runtimes", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissLaunchDialog() }) {
+                    Text("Tutup", color = TextSecondary)
+                }
+            },
+            containerColor = SophisticatedCard,
+            shape = RoundedCornerShape(24.dp)
+        )
+    }
+
+    // Import Options Dialog (Folder, File, or Samples)
+    if (showImportMenu) {
+        AlertDialog(
+            onDismissRequest = { showImportMenu = false },
+            title = { Text("Game Scanner & Import", color = TextPrimary, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Pilih sumber game untuk dipindai engine dan kompatibilitasnya:",
                         color = TextSecondary,
                         fontSize = 13.sp
                     )
 
+                    // 1. Folder Picker
                     Button(
                         onClick = {
                             showImportMenu = false
-                            zipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*"))
+                            folderLauncher.launch(null)
                         },
-                        modifier = Modifier.fillMaxWidth().testTag("btn_import_zip"),
+                        modifier = Modifier.fillMaxWidth().testTag("btn_import_folder"),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = LavenderPrimary,
                             contentColor = DeepVioletOnPrimary
@@ -611,9 +713,28 @@ fun GameLibraryScreen(
                     ) {
                         Icon(Icons.Default.FolderOpen, null, tint = DeepVioletOnPrimary)
                         Spacer(Modifier.width(8.dp))
-                        Text("Select ZIP Archive", fontWeight = FontWeight.Bold)
+                        Text("Pilih Folder Game (Direktori)", fontWeight = FontWeight.Bold)
                     }
 
+                    // 2. Single File Picker
+                    Button(
+                        onClick = {
+                            showImportMenu = false
+                            fileLauncher.launch(arrayOf("*/*"))
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("btn_import_file"),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = SophisticatedSurfaceVariant,
+                            contentColor = TextPrimary
+                        ),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.Description, null, tint = SoftMint)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Pilih File (.exe / .apk / .zip / .html / .json)")
+                    }
+
+                    // 3. Reload Sample Games
                     Button(
                         onClick = {
                             showImportMenu = false
@@ -626,16 +747,16 @@ fun GameLibraryScreen(
                         ),
                         shape = RoundedCornerShape(14.dp)
                     ) {
-                        Icon(Icons.Default.Refresh, null, tint = LavenderPrimary)
+                        Icon(Icons.Default.Refresh, null, tint = SoftAmber)
                         Spacer(Modifier.width(8.dp))
-                        Text("Reload Sample Games")
+                        Text("Muat Ulang Demo Games")
                     }
                 }
             },
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showImportMenu = false }) {
-                    Text("Cancel", color = TextSecondary)
+                    Text("Batal", color = TextSecondary)
                 }
             },
             containerColor = SophisticatedCard,
@@ -701,7 +822,7 @@ fun RecentGameCard(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(80.dp)
+            .width(84.dp)
             .clickable(onClick = onSelect)
             .testTag("recent_game_card_${game.id}")
     ) {
@@ -714,11 +835,13 @@ fun RecentGameCard(
             contentAlignment = Alignment.Center
         ) {
             val emoji = when (engine) {
-                EngineType.RPG_MAKER_MV, EngineType.RPG_MAKER_MZ, EngineType.RPG_MAKER_VX, EngineType.RPG_MAKER_XP -> "🎮"
+                EngineType.RPG_MAKER_MV, EngineType.RPG_MAKER_MZ, EngineType.RPG_MAKER_RGSS -> "🎮"
                 EngineType.RENPY -> "🌸"
-                EngineType.HTML5 -> "🕹️"
+                EngineType.HTML -> "🕹️"
                 EngineType.GODOT -> "👾"
                 EngineType.UNITY -> "🏔️"
+                EngineType.ANDROID_APK -> "📱"
+                EngineType.WINDOWS_UNKNOWN -> "💻"
                 else -> "🎲"
             }
             Text(
@@ -793,11 +916,13 @@ fun GameListItem(
                 )
 
                 val emoji = when (engine) {
-                    EngineType.RPG_MAKER_MV, EngineType.RPG_MAKER_MZ, EngineType.RPG_MAKER_VX, EngineType.RPG_MAKER_XP -> "👾"
+                    EngineType.RPG_MAKER_MV, EngineType.RPG_MAKER_MZ, EngineType.RPG_MAKER_RGSS -> "👾"
                     EngineType.RENPY -> "🎭"
-                    EngineType.HTML5 -> "🕹️"
+                    EngineType.HTML -> "🕹️"
                     EngineType.GODOT -> "⚡"
                     EngineType.UNITY -> "🏔️"
+                    EngineType.ANDROID_APK -> "📱"
+                    EngineType.WINDOWS_UNKNOWN -> "💻"
                     else -> "🎲"
                 }
 
@@ -834,27 +959,33 @@ fun GameListItem(
 
                 Spacer(Modifier.height(4.dp))
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
-                            .background(SophisticatedBadge)
+                            .background(Color(engine.badgeColor).copy(alpha = 0.2f))
+                            .border(1.dp, Color(engine.badgeColor).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text(
                             text = engine.displayName.uppercase(),
-                            color = LavenderPrimary,
+                            color = Color(engine.badgeColor),
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.5.sp
                         )
                     }
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "v${game.engineVersion}",
-                        color = TextSecondary,
-                        fontSize = 10.sp
-                    )
+
+                    if (game.confidence > 0f) {
+                        Text(
+                            text = "${(game.confidence * 100).toInt()}% Match",
+                            color = TextSecondary,
+                            fontSize = 10.sp
+                        )
+                    }
                 }
 
                 if (game.lastPlayed > 0L) {
@@ -867,21 +998,35 @@ fun GameListItem(
                 }
             }
 
-            // Circular Play Action Button
+            val runtimeProvider = remember(game) { RuntimeManager.getRuntimeForGame(game) }
+            val isDirectlyPlayable = runtimeProvider.canRunDirectly(game)
+            val isApk = game.executablePath.endsWith(".apk", ignoreCase = true)
+
+            // Dynamic Action Button (Honest UI)
             Box(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(LavenderPrimary)
+                    .background(
+                        when {
+                            isDirectlyPlayable && !isApk -> LavenderPrimary
+                            isDirectlyPlayable && isApk -> SoftMint
+                            else -> SoftAmber
+                        }
+                    )
                     .clickable(onClick = onPlay)
                     .testTag("btn_play_${game.id}"),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    Icons.Default.PlayArrow,
-                    contentDescription = "Play",
+                    imageVector = when {
+                        isDirectlyPlayable && !isApk -> Icons.Default.PlayArrow
+                        isDirectlyPlayable && isApk -> Icons.Default.Android
+                        else -> Icons.Default.Warning
+                    },
+                    contentDescription = if (isDirectlyPlayable) "Play / Launch" else "Runtime Required",
                     tint = DeepVioletOnPrimary,
-                    modifier = Modifier.size(22.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
@@ -936,4 +1081,3 @@ fun GameListItem(
         }
     }
 }
-

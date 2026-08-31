@@ -1,99 +1,109 @@
 package com.example.engine
 
 import com.example.model.EngineType
+import com.example.model.GameInfo
 import java.io.File
 
 data class EngineDetectionResult(
     val engineType: EngineType,
     val engineName: String,
     val version: String,
+    val platform: String,
     val confidence: Float,
     val mainExecutable: String,
-    val architecture: String = "Universal",
-    val signatureFiles: List<String> = emptyList(),
+    val detectedFiles: List<String>,
+    val runtimeRequired: String,
+    val isDirectlyPlayable: Boolean,
     val notes: String = ""
-)
+) {
+    fun toGameInfo(gamePath: String, title: String, totalSizeBytes: Long = 0L): GameInfo {
+        return GameInfo(
+            path = gamePath,
+            title = title,
+            engine = engineType,
+            engineName = engineName,
+            version = version,
+            platform = platform,
+            confidence = confidence,
+            detectedFiles = detectedFiles,
+            runtimeRequired = runtimeRequired,
+            isDirectlyPlayable = isDirectlyPlayable,
+            executablePath = mainExecutable,
+            fileSizeBytes = totalSizeBytes,
+            notes = notes
+        )
+    }
+}
 
 interface EngineSignaturePlugin {
     val engineType: EngineType
     fun detect(gameDir: File, fileList: List<String>): EngineDetectionResult?
 }
 
-class RpgMakerPlugin : EngineSignaturePlugin {
+// 1. RPG MAKER MV / MZ DETECTOR
+class RpgMakerHtmlPlugin : EngineSignaturePlugin {
     override val engineType: EngineType = EngineType.RPG_MAKER_MV
 
     override fun detect(gameDir: File, fileList: List<String>): EngineDetectionResult? {
         val lowerFiles = fileList.map { it.lowercase() }
+        val matchedFiles = mutableListOf<String>()
 
-        // Check RPG Maker MZ
-        if (lowerFiles.any { it.contains("rmmz_core.js") } ||
-            (lowerFiles.any { it.contains("system.json") } && lowerFiles.any { it.contains("main.js") })) {
+        // RPG Maker MZ check: rmmz_core.js, rmmz_managers.js, rmmz_scenes.js, main.js with MZ structure
+        val hasRmmzCore = lowerFiles.any { it.contains("rmmz_core.js") }
+        val hasRmmzManagers = lowerFiles.any { it.contains("rmmz_managers.js") }
+        val hasSystemJson = lowerFiles.any { it.endsWith("system.json") }
+        val hasMainJs = lowerFiles.any { it.endsWith("main.js") || it.contains("js/main.js") }
+        val hasMzPlugins = lowerFiles.any { it.contains("rmmz_") }
+
+        if (hasRmmzCore || hasMzPlugins || (hasSystemJson && hasRmmzManagers)) {
+            val indexHtml = findIndexHtml(fileList) ?: "index.html"
+            fileList.filterTo(matchedFiles) {
+                it.contains("rmmz", ignoreCase = true) ||
+                it.contains("System.json", ignoreCase = true) ||
+                it.endsWith("package.json", ignoreCase = true) ||
+                it.endsWith("index.html", ignoreCase = true)
+            }
             return EngineDetectionResult(
                 engineType = EngineType.RPG_MAKER_MZ,
                 engineName = "RPG Maker MZ",
-                version = "1.8.x (Chromium/Pixi.js)",
+                version = "MZ (Chromium / PixiJS v5+)",
+                platform = "Universal Web / Chromium WebGL",
                 confidence = 0.98f,
-                mainExecutable = findIndexHtml(fileList) ?: "index.html",
-                architecture = "HTML5 / WebGL / V8",
-                signatureFiles = fileList.filter { it.contains("rmmz", ignoreCase = true) || it.contains("System.json", ignoreCase = true) },
-                notes = "Native high-performance WebGL / Chromium rendering supported."
+                mainExecutable = indexHtml,
+                detectedFiles = matchedFiles.distinct().take(6),
+                runtimeRequired = "RPG Maker MV/MZ Web Runtime",
+                isDirectlyPlayable = true,
+                notes = "Full touch controls, virtual gamepad, and live dialogue translation hooks supported."
             )
         }
 
-        // Check RPG Maker MV
-        if (lowerFiles.any { it.contains("rpg_core.js") } ||
-            (lowerFiles.any { it.contains("system.json") } && lowerFiles.any { it.contains("rpg_managers.js") })) {
+        // RPG Maker MV check: rpg_core.js, rpg_managers.js, www folder structure
+        val hasRpgCore = lowerFiles.any { it.contains("rpg_core.js") }
+        val hasRpgManagers = lowerFiles.any { it.contains("rpg_managers.js") }
+        val hasWwwDir = lowerFiles.any { it.startsWith("www/") || it.startsWith("www\\") }
+        val hasPackageJson = lowerFiles.any { it.endsWith("package.json") }
+
+        if (hasRpgCore || (hasSystemJson && hasRpgManagers) || (hasWwwDir && hasPackageJson && hasSystemJson)) {
+            val indexHtml = findIndexHtml(fileList) ?: "www/index.html"
+            fileList.filterTo(matchedFiles) {
+                it.contains("rpg_core", ignoreCase = true) ||
+                it.contains("rpg_managers", ignoreCase = true) ||
+                it.contains("System.json", ignoreCase = true) ||
+                it.endsWith("package.json", ignoreCase = true) ||
+                it.endsWith("index.html", ignoreCase = true) ||
+                it.startsWith("www", ignoreCase = true)
+            }
             return EngineDetectionResult(
                 engineType = EngineType.RPG_MAKER_MV,
                 engineName = "RPG Maker MV",
-                version = "1.6.x (Chromium/Pixi.js)",
+                version = "MV (Chromium / PixiJS v4)",
+                platform = "Universal Web / Chromium WebGL",
                 confidence = 0.98f,
-                mainExecutable = findIndexHtml(fileList) ?: "index.html",
-                architecture = "HTML5 / WebGL / Pixi.js",
-                signatureFiles = fileList.filter { it.contains("rpg_core", ignoreCase = true) || it.contains("System.json", ignoreCase = true) },
-                notes = "Full touch control, virtual gamepad, and live translation hook supported."
-            )
-        }
-
-        // Check RPG Maker VX Ace
-        if (lowerFiles.any { it.endsWith("game.rvdata2") } || lowerFiles.any { it.contains("rgss301") }) {
-            return EngineDetectionResult(
-                engineType = EngineType.RPG_MAKER_VXACE,
-                engineName = "RPG Maker VX Ace",
-                version = "RGSS3",
-                confidence = 0.95f,
-                mainExecutable = "Game.exe",
-                architecture = "x86 PE Binary (Ruby 1.9)",
-                signatureFiles = fileList.filter { it.endsWith(".rvdata2", ignoreCase = true) || it.contains("rgss3", ignoreCase = true) },
-                notes = "Requires RGSS3 compatibility runtime or mkxp-z translation layer."
-            )
-        }
-
-        // Check RPG Maker VX
-        if (lowerFiles.any { it.endsWith("game.rvdata") } || lowerFiles.any { it.contains("rgss202") }) {
-            return EngineDetectionResult(
-                engineType = EngineType.RPG_MAKER_VX,
-                engineName = "RPG Maker VX",
-                version = "RGSS2",
-                confidence = 0.95f,
-                mainExecutable = "Game.exe",
-                architecture = "x86 PE Binary (Ruby 1.8)",
-                signatureFiles = fileList.filter { it.endsWith(".rvdata", ignoreCase = true) || it.contains("rgss2", ignoreCase = true) },
-                notes = "Requires RGSS2 compatibility runtime."
-            )
-        }
-
-        // Check RPG Maker XP
-        if (lowerFiles.any { it.endsWith("game.rxdata") } || lowerFiles.any { it.contains("rgss104") }) {
-            return EngineDetectionResult(
-                engineType = EngineType.RPG_MAKER_XP,
-                engineName = "RPG Maker XP",
-                version = "RGSS1",
-                confidence = 0.95f,
-                mainExecutable = "Game.exe",
-                architecture = "x86 PE Binary (Ruby 1.8)",
-                signatureFiles = fileList.filter { it.endsWith(".rxdata", ignoreCase = true) || it.contains("rgss1", ignoreCase = true) },
-                notes = "Requires RGSS1 compatibility runtime / mkxp translation layer."
+                mainExecutable = indexHtml,
+                detectedFiles = matchedFiles.distinct().take(6),
+                runtimeRequired = "RPG Maker MV/MZ Web Runtime",
+                isDirectlyPlayable = true,
+                notes = "Full touch controls, audio WebAudio playback, and MTool live translation hooks supported."
             )
         }
 
@@ -101,143 +111,436 @@ class RpgMakerPlugin : EngineSignaturePlugin {
     }
 
     private fun findIndexHtml(fileList: List<String>): String? {
-        return fileList.firstOrNull { it.equals("index.html", ignoreCase = true) || it.endsWith("/index.html", ignoreCase = true) || it.endsWith("\\index.html", ignoreCase = true) }
+        return fileList.firstOrNull { it.equals("www/index.html", ignoreCase = true) }
+            ?: fileList.firstOrNull { it.equals("index.html", ignoreCase = true) || it.endsWith("/index.html", ignoreCase = true) }
     }
 }
 
+// 2. RPG MAKER XP / VX / VX ACE (RGSS1, RGSS2, RGSS3) DETECTOR
+class RpgMakerRgssPlugin : EngineSignaturePlugin {
+    override val engineType: EngineType = EngineType.RPG_MAKER_RGSS
+
+    override fun detect(gameDir: File, fileList: List<String>): EngineDetectionResult? {
+        val lowerFiles = fileList.map { it.lowercase() }
+        val matchedFiles = mutableListOf<String>()
+
+        val hasGameIni = lowerFiles.any { it.endsWith("game.ini") }
+        val hasGameExe = lowerFiles.any { it.endsWith("game.exe") }
+        val hasRvdata2 = lowerFiles.any { it.endsWith(".rvdata2") || it.contains("scripts.rvdata2") }
+        val hasRvdata = lowerFiles.any { it.endsWith(".rvdata") || it.contains("scripts.rvdata") }
+        val hasRxdata = lowerFiles.any { it.endsWith(".rxdata") || it.contains("scripts.rxdata") }
+        val hasRgssDll = lowerFiles.any { it.contains("rgss") && it.endsWith(".dll") }
+
+        // RGSS3 = RPG Maker VX Ace
+        if (hasRvdata2 || (hasGameIni && hasRgssDll && lowerFiles.any { it.contains("rgss3") })) {
+            fileList.filterTo(matchedFiles) {
+                it.endsWith("game.ini", ignoreCase = true) ||
+                it.endsWith("game.exe", ignoreCase = true) ||
+                it.endsWith(".rvdata2", ignoreCase = true) ||
+                it.contains("rgss", ignoreCase = true)
+            }
+            return EngineDetectionResult(
+                engineType = EngineType.RPG_MAKER_RGSS,
+                engineName = "RPG Maker VX Ace",
+                version = "RGSS3 (Ruby 1.9)",
+                platform = "Windows x86 PE Binary (Ruby 1.9 Bytecode)",
+                confidence = 0.96f,
+                mainExecutable = "Game.exe",
+                detectedFiles = matchedFiles.distinct().take(6),
+                runtimeRequired = "RGSS3 Compatibility Runtime Required",
+                isDirectlyPlayable = false,
+                notes = "RGSS3 scripts and rvdata2 database found. Requires native RGSS compatibility layer (mkxp-z) to execute on Android."
+            )
+        }
+
+        // RGSS2 = RPG Maker VX
+        if (hasRvdata || (hasGameIni && hasRgssDll && lowerFiles.any { it.contains("rgss2") })) {
+            fileList.filterTo(matchedFiles) {
+                it.endsWith("game.ini", ignoreCase = true) ||
+                it.endsWith("game.exe", ignoreCase = true) ||
+                it.endsWith(".rvdata", ignoreCase = true) ||
+                it.contains("rgss", ignoreCase = true)
+            }
+            return EngineDetectionResult(
+                engineType = EngineType.RPG_MAKER_RGSS,
+                engineName = "RPG Maker VX",
+                version = "RGSS2 (Ruby 1.8)",
+                platform = "Windows x86 PE Binary (Ruby 1.8 Bytecode)",
+                confidence = 0.95f,
+                mainExecutable = "Game.exe",
+                detectedFiles = matchedFiles.distinct().take(6),
+                runtimeRequired = "RGSS2 Compatibility Runtime Required",
+                isDirectlyPlayable = false,
+                notes = "RGSS2 scripts and rvdata database found. Requires RGSS2 compatibility runtime."
+            )
+        }
+
+        // RGSS1 = RPG Maker XP
+        if (hasRxdata || (hasGameIni && hasRgssDll && lowerFiles.any { it.contains("rgss1") })) {
+            fileList.filterTo(matchedFiles) {
+                it.endsWith("game.ini", ignoreCase = true) ||
+                it.endsWith("game.exe", ignoreCase = true) ||
+                it.endsWith(".rxdata", ignoreCase = true) ||
+                it.contains("rgss", ignoreCase = true)
+            }
+            return EngineDetectionResult(
+                engineType = EngineType.RPG_MAKER_RGSS,
+                engineName = "RPG Maker XP",
+                version = "RGSS1 (Ruby 1.8)",
+                platform = "Windows x86 PE Binary (Ruby 1.8 Bytecode)",
+                confidence = 0.95f,
+                mainExecutable = "Game.exe",
+                detectedFiles = matchedFiles.distinct().take(6),
+                runtimeRequired = "RGSS1 Compatibility Runtime Required",
+                isDirectlyPlayable = false,
+                notes = "RGSS1 scripts and rxdata database found. Requires RGSS1 compatibility runtime."
+            )
+        }
+
+        return null
+    }
+}
+
+// 3. REN'PY DETECTOR
 class RenPyPlugin : EngineSignaturePlugin {
     override val engineType: EngineType = EngineType.RENPY
 
     override fun detect(gameDir: File, fileList: List<String>): EngineDetectionResult? {
         val lowerFiles = fileList.map { it.lowercase() }
-        val hasRpy = lowerFiles.any { it.endsWith(".rpy") || it.endsWith(".rpyc") || it.endsWith(".rpa") }
-        val hasRenpyDir = lowerFiles.any { it.contains("renpy/") || it.contains("renpy\\") || it.contains("options.rpy") }
+        val matchedFiles = mutableListOf<String>()
 
-        if (hasRpy || hasRenpyDir) {
-            val isPy3 = lowerFiles.any { it.contains("py3") }
+        val hasRpy = lowerFiles.any { it.endsWith(".rpy") || it.endsWith(".rpyc") }
+        val hasRpa = lowerFiles.any { it.endsWith(".rpa") }
+        val hasRenpyFolder = lowerFiles.any { it.startsWith("renpy/") || it.startsWith("renpy\\") || it.contains("renpy/common") }
+        val hasGameFolder = lowerFiles.any { it.startsWith("game/") || it.startsWith("game\\") }
+        val hasLibRenpySo = lowerFiles.any { it.contains("librenpy.so") }
+        val isApk = lowerFiles.any { it.endsWith(".apk") } && (hasRpy || hasRpa || hasRenpyFolder || hasLibRenpySo)
+        val isWeb = lowerFiles.any { it.endsWith("index.html") || it.contains("pyodide") || it.contains("renpy-pre") } && (hasRpa || hasGameFolder)
+
+        if (isApk || hasLibRenpySo) {
+            fileList.filterTo(matchedFiles) {
+                it.endsWith(".apk", ignoreCase = true) ||
+                it.endsWith(".rpy", ignoreCase = true) ||
+                it.endsWith(".rpyc", ignoreCase = true) ||
+                it.endsWith(".rpa", ignoreCase = true) ||
+                it.contains("librenpy.so", ignoreCase = true)
+            }
             return EngineDetectionResult(
                 engineType = EngineType.RENPY,
-                engineName = "Ren'Py Visual Novel Engine",
-                version = if (isPy3) "Ren'Py 8 (Python 3)" else "Ren'Py 7 (Python 2.7)",
-                confidence = 0.96f,
-                mainExecutable = fileList.firstOrNull { it.endsWith(".py", ignoreCase = true) || it.endsWith(".sh", ignoreCase = true) || it.endsWith(".exe", ignoreCase = true) } ?: "game/",
-                architecture = "Python / Cython / SDL2",
-                signatureFiles = fileList.filter { it.endsWith(".rpy", ignoreCase = true) || it.endsWith(".rpyc", ignoreCase = true) || it.endsWith(".rpa", ignoreCase = true) }.take(5),
-                notes = "Ren'Py scripts and archive packages (.rpa) identified. Save and dialogue extraction adapter enabled."
+                engineName = "Ren'Py (Android Native)",
+                version = "Ren'Py Android Native Package",
+                platform = "Android Native (librenpy.so)",
+                confidence = 0.99f,
+                mainExecutable = fileList.firstOrNull { it.endsWith(".apk", ignoreCase = true) } ?: "librenpy.so",
+                detectedFiles = matchedFiles.distinct().take(6),
+                runtimeRequired = "Android Package Installer",
+                isDirectlyPlayable = true,
+                notes = "Ren'Py native Android APK package detected. Can be installed or launched directly."
+            )
+        }
+
+        if (isWeb && lowerFiles.any { it.endsWith("index.html") }) {
+            fileList.filterTo(matchedFiles) {
+                it.endsWith("index.html", ignoreCase = true) ||
+                it.endsWith(".rpa", ignoreCase = true) ||
+                it.contains("game", ignoreCase = true)
+            }
+            val indexHtml = fileList.firstOrNull { it.endsWith("index.html", ignoreCase = true) } ?: "index.html"
+            return EngineDetectionResult(
+                engineType = EngineType.RENPY,
+                engineName = "Ren'Py (WebGL)",
+                version = "Ren'Py Web (Pyodide / WebAssembly)",
+                platform = "Universal Web / WebAssembly",
+                confidence = 0.97f,
+                mainExecutable = indexHtml,
+                detectedFiles = matchedFiles.distinct().take(6),
+                runtimeRequired = "HTML5 / WebGL Native Core",
+                isDirectlyPlayable = true,
+                notes = "Ren'Py Web export detected. Playable directly via Web runtime."
+            )
+        }
+
+        if (hasRpy || hasRpa || (hasRenpyFolder && hasGameFolder)) {
+            fileList.filterTo(matchedFiles) {
+                it.endsWith(".rpy", ignoreCase = true) ||
+                it.endsWith(".rpyc", ignoreCase = true) ||
+                it.endsWith(".rpa", ignoreCase = true) ||
+                it.startsWith("renpy", ignoreCase = true) ||
+                it.startsWith("game", ignoreCase = true)
+            }
+            val isPy3 = lowerFiles.any { it.contains("py3") }
+            val pyVer = if (isPy3) "Ren'Py 8 (Python 3.x)" else "Ren'Py 7 (Python 2.7)"
+            val mainExe = fileList.firstOrNull { it.endsWith(".py", ignoreCase = true) || it.endsWith(".exe", ignoreCase = true) || it.endsWith(".sh", ignoreCase = true) } ?: "game/"
+
+            return EngineDetectionResult(
+                engineType = EngineType.RENPY,
+                engineName = "Ren'Py",
+                version = pyVer,
+                platform = "Python / Cython / SDL2",
+                confidence = 0.95f,
+                mainExecutable = mainExe,
+                detectedFiles = matchedFiles.distinct().take(6),
+                runtimeRequired = "Ren'Py Native Runtime Required",
+                isDirectlyPlayable = false,
+                notes = "Ren'Py script bytecode (.rpyc) and archive packages (.rpa) detected. Requires Ren'Py Android runtime provider."
             )
         }
         return null
     }
 }
 
+// 4. UNITY DETECTOR (WINDOWS, ANDROID APK, WEBGL)
 class UnityPlugin : EngineSignaturePlugin {
     override val engineType: EngineType = EngineType.UNITY
 
     override fun detect(gameDir: File, fileList: List<String>): EngineDetectionResult? {
         val lowerFiles = fileList.map { it.lowercase() }
-        val hasUnityPlayer = lowerFiles.any { it.contains("unityplayer.dll") || it.contains("libunity.so") }
-        val hasUnityData = lowerFiles.any { it.contains("globalgamemanagers") || it.contains("data.unity3d") || it.contains("unity default resources") }
-        val hasManaged = lowerFiles.any { it.contains("unityengine.dll") || it.contains("assembly-csharp.dll") }
+        val matchedFiles = mutableListOf<String>()
 
-        if (hasUnityPlayer || hasUnityData || hasManaged) {
-            val isAndroidNative = lowerFiles.any { it.contains("libunity.so") || it.endsWith(".apk") }
-            val isIl2cpp = lowerFiles.any { it.contains("libil2cpp.so") || it.contains("gameassembly.dll") }
-            val arch = when {
-                isAndroidNative -> if (lowerFiles.any { it.contains("arm64") }) "Android ARM64-v8a" else "Android ARMv7"
-                lowerFiles.any { it.contains("x86_64") } -> "Windows x86_64"
-                else -> "Windows x86 / PE Executable"
+        val hasUnityPlayerDll = lowerFiles.any { it.contains("unityplayer.dll") }
+        val hasUnityData = lowerFiles.any { it.contains("_data") || it.contains("globalgamemanagers") || it.contains("resources.assets") || it.contains("level0") }
+        val hasGameAssembly = lowerFiles.any { it.contains("gameassembly.dll") || it.contains("libil2cpp.so") }
+        val hasLibUnitySo = lowerFiles.any { it.contains("libunity.so") }
+        val hasUnityLoaderJs = lowerFiles.any { it.contains("unityloader.js") || it.contains(".loader.js") || it.contains(".framework.js") }
+        val hasUnityWebGl = hasUnityLoaderJs || (lowerFiles.any { it.contains("build/") && it.endsWith(".wasm") } && lowerFiles.any { it.endsWith(".data") || it.endsWith(".unityweb") })
+
+        if (hasUnityWebGl) {
+            fileList.filterTo(matchedFiles) {
+                it.contains("unity", ignoreCase = true) ||
+                it.endsWith(".wasm", ignoreCase = true) ||
+                it.endsWith(".data", ignoreCase = true) ||
+                it.endsWith(".loader.js", ignoreCase = true) ||
+                it.endsWith("index.html", ignoreCase = true)
             }
-
+            val indexHtml = fileList.firstOrNull { it.endsWith("index.html", ignoreCase = true) } ?: "index.html"
             return EngineDetectionResult(
                 engineType = EngineType.UNITY,
-                engineName = "Unity Engine",
-                version = if (isIl2cpp) "Unity (IL2CPP Ahead-of-Time)" else "Unity (Mono Scripting Backend)",
-                confidence = 0.99f,
-                mainExecutable = fileList.firstOrNull { it.endsWith(".exe", ignoreCase = true) || it.endsWith(".apk", ignoreCase = true) } ?: "UnityGame",
-                architecture = arch,
-                signatureFiles = fileList.filter { it.contains("unity", ignoreCase = true) || it.contains("Assembly-CSharp", ignoreCase = true) }.take(5),
-                notes = if (isAndroidNative) "Android native Unity package detected - ready for direct execution."
-                else "Windows Unity build detected. Requires Box86/Wine or ARM64 translated runtime environment."
+                engineName = "Unity (WebGL)",
+                version = "Unity WebGL (WebAssembly)",
+                platform = "Universal Web / WebAssembly",
+                confidence = 0.98f,
+                mainExecutable = indexHtml,
+                detectedFiles = matchedFiles.distinct().take(6),
+                runtimeRequired = "HTML5 / WebGL Native Core",
+                isDirectlyPlayable = true,
+                notes = "Unity WebGL export detected. Directly executable via Web runtime."
             )
+        }
+
+        if (hasUnityPlayerDll || hasUnityData || hasGameAssembly || hasLibUnitySo) {
+            fileList.filterTo(matchedFiles) {
+                it.contains("unity", ignoreCase = true) ||
+                it.contains("_data", ignoreCase = true) ||
+                it.contains("globalgamemanagers", ignoreCase = true) ||
+                it.contains("gameassembly", ignoreCase = true) ||
+                it.endsWith(".assets", ignoreCase = true)
+            }
+
+            val isAndroidApk = lowerFiles.any { it.endsWith(".apk") } || hasLibUnitySo
+
+            if (isAndroidApk) {
+                return EngineDetectionResult(
+                    engineType = EngineType.UNITY,
+                    engineName = "Unity (Android Native)",
+                    version = if (hasGameAssembly) "Unity IL2CPP AOT" else "Unity Mono Runtime",
+                    platform = "Android Native (ARM64 / ARMv7)",
+                    confidence = 0.99f,
+                    mainExecutable = fileList.firstOrNull { it.endsWith(".apk", ignoreCase = true) } ?: "libunity.so",
+                    detectedFiles = matchedFiles.distinct().take(6),
+                    runtimeRequired = "Android Package Installer",
+                    isDirectlyPlayable = true,
+                    notes = "Unity native Android package (.apk) detected. Can be installed directly via Android system installer."
+                )
+            } else {
+                return EngineDetectionResult(
+                    engineType = EngineType.UNITY,
+                    engineName = "Unity (Windows Standalone)",
+                    version = if (hasGameAssembly) "Unity IL2CPP (x86_64 PE)" else "Unity Mono (x86_64 PE)",
+                    platform = "Windows x86/x64 Standalone",
+                    confidence = 0.98f,
+                    mainExecutable = fileList.firstOrNull { it.endsWith(".exe", ignoreCase = true) } ?: "UnityPlayer.dll",
+                    detectedFiles = matchedFiles.distinct().take(6),
+                    runtimeRequired = "Windows Compatibility Runtime Required",
+                    isDirectlyPlayable = false,
+                    notes = "Unity Windows executable detected. Android ARM CPUs cannot natively execute x86 PE binaries without binary translation (Box86/Box64 + Wine)."
+                )
+            }
         }
         return null
     }
 }
 
+// 5. GODOT DETECTOR (WINDOWS, ANDROID, WEB)
 class GodotPlugin : EngineSignaturePlugin {
     override val engineType: EngineType = EngineType.GODOT
 
     override fun detect(gameDir: File, fileList: List<String>): EngineDetectionResult? {
         val lowerFiles = fileList.map { it.lowercase() }
+        val matchedFiles = mutableListOf<String>()
+
         val hasGodotProject = lowerFiles.any { it.endsWith("project.godot") || it.endsWith("engine.cfg") }
         val hasPck = lowerFiles.any { it.endsWith(".pck") }
+        val hasGodotFile = lowerFiles.any { it.endsWith(".godot") }
+        val hasHtml = lowerFiles.any { it.endsWith("index.html") }
+        val hasWasm = lowerFiles.any { it.endsWith(".wasm") }
+        val hasExe = lowerFiles.any { it.endsWith(".exe") }
+        val hasApk = lowerFiles.any { it.endsWith(".apk") }
 
-        if (hasGodotProject || hasPck) {
-            val pckFile = fileList.firstOrNull { it.endsWith(".pck", ignoreCase = true) } ?: "project.godot"
+        if (hasGodotProject || hasPck || hasGodotFile) {
+            fileList.filterTo(matchedFiles) {
+                it.endsWith("project.godot", ignoreCase = true) ||
+                it.endsWith(".pck", ignoreCase = true) ||
+                it.endsWith(".godot", ignoreCase = true) ||
+                it.endsWith("engine.cfg", ignoreCase = true)
+            }
+
+            if (hasHtml && hasWasm) {
+                val indexHtml = fileList.firstOrNull { it.endsWith("index.html", ignoreCase = true) } ?: "index.html"
+                return EngineDetectionResult(
+                    engineType = EngineType.GODOT,
+                    engineName = "Godot (Web)",
+                    version = "Godot WebGL / WebAssembly",
+                    platform = "Universal Web / WebAssembly",
+                    confidence = 0.97f,
+                    mainExecutable = indexHtml,
+                    detectedFiles = matchedFiles.distinct().take(6),
+                    runtimeRequired = "HTML5 / WebGL Native Core",
+                    isDirectlyPlayable = true,
+                    notes = "Godot HTML5/WebGL export package detected. Directly executable via Web runtime."
+                )
+            }
+
+            if (hasApk) {
+                val apk = fileList.firstOrNull { it.endsWith(".apk", ignoreCase = true) } ?: "game.apk"
+                return EngineDetectionResult(
+                    engineType = EngineType.GODOT,
+                    engineName = "Godot (Android APK)",
+                    version = "Godot Android Native",
+                    platform = "Android Native",
+                    confidence = 0.99f,
+                    mainExecutable = apk,
+                    detectedFiles = matchedFiles.distinct().take(6),
+                    runtimeRequired = "Android Package Installer",
+                    isDirectlyPlayable = true,
+                    notes = "Godot Android APK package detected."
+                )
+            }
+
+            val mainPck = fileList.firstOrNull { it.endsWith(".pck", ignoreCase = true) }
+                ?: fileList.firstOrNull { it.endsWith("project.godot", ignoreCase = true) }
+                ?: "project.godot"
+
             return EngineDetectionResult(
                 engineType = EngineType.GODOT,
-                engineName = "Godot Engine",
+                engineName = if (hasExe) "Godot (Windows)" else "Godot Engine",
                 version = if (lowerFiles.any { it.endsWith("engine.cfg") }) "Godot 2.x" else "Godot 3.x / 4.x",
+                platform = if (hasExe) "Windows x86/x64 Standalone" else "Godot Bytecode / PCK Archive",
                 confidence = 0.95f,
-                mainExecutable = pckFile,
-                architecture = "Godot Bytecode / PCK Archive",
-                signatureFiles = fileList.filter { it.endsWith(".pck", ignoreCase = true) || it.endsWith(".godot", ignoreCase = true) },
-                notes = "Godot resource package (.pck) detected. Compatible with Godot mobile runtime wrapper."
+                mainExecutable = mainPck,
+                detectedFiles = matchedFiles.distinct().take(6),
+                runtimeRequired = if (hasExe) "Windows Compatibility Runtime Required" else "Godot Native Mobile Runner Required",
+                isDirectlyPlayable = false,
+                notes = "Godot PCK archive or project file found. Export as HTML5/WebGL or Android APK for direct execution."
             )
         }
         return null
     }
 }
 
-class Html5Plugin : EngineSignaturePlugin {
-    override val engineType: EngineType = EngineType.HTML5
+// 6. ANDROID APK DETECTOR
+class AndroidApkPlugin : EngineSignaturePlugin {
+    override val engineType: EngineType = EngineType.ANDROID_APK
 
     override fun detect(gameDir: File, fileList: List<String>): EngineDetectionResult? {
         val lowerFiles = fileList.map { it.lowercase() }
-        val indexHtml = fileList.firstOrNull { it.equals("index.html", ignoreCase = true) || it.endsWith("/index.html", ignoreCase = true) || it.endsWith("\\index.html", ignoreCase = true) }
+        val apkFile = fileList.firstOrNull { it.endsWith(".apk", ignoreCase = true) }
+        val hasManifest = lowerFiles.any { it.endsWith("androidmanifest.xml") }
+
+        if (apkFile != null || hasManifest) {
+            val detected = mutableListOf<String>()
+            if (apkFile != null) detected.add(apkFile)
+            if (hasManifest) detected.add(fileList.first { it.endsWith("androidmanifest.xml", ignoreCase = true) })
+
+            return EngineDetectionResult(
+                engineType = EngineType.ANDROID_APK,
+                engineName = "Android Application Package (APK)",
+                version = "Android Native (Dalvik/ART + Native NDK)",
+                platform = "Android Native",
+                confidence = 0.99f,
+                mainExecutable = apkFile ?: "AndroidManifest.xml",
+                detectedFiles = detected,
+                runtimeRequired = "Android Package Installer",
+                isDirectlyPlayable = true,
+                notes = "Standard Android APK package. Can be installed and executed via Android OS PackageInstaller."
+            )
+        }
+        return null
+    }
+}
+
+// 7. HTML / WEBGL DETECTOR
+class HtmlPlugin : EngineSignaturePlugin {
+    override val engineType: EngineType = EngineType.HTML
+
+    override fun detect(gameDir: File, fileList: List<String>): EngineDetectionResult? {
+        val lowerFiles = fileList.map { it.lowercase() }
+        val indexHtml = fileList.firstOrNull { it.equals("index.html", ignoreCase = true) || it.endsWith("/index.html", ignoreCase = true) }
 
         if (indexHtml != null) {
+            val matched = mutableListOf(indexHtml)
+            fileList.filterTo(matched) { it.endsWith(".js", ignoreCase = true) || it.endsWith(".json", ignoreCase = true) }
+
             val isPhaser = lowerFiles.any { it.contains("phaser") }
             val isPixi = lowerFiles.any { it.contains("pixi") }
             val isConstruct = lowerFiles.any { it.contains("c2runtime") || it.contains("c3runtime") }
 
             val variant = when {
-                isConstruct -> "Construct 2 / 3 HTML5"
-                isPhaser -> "Phaser.io Game Engine"
-                isPixi -> "PixiJS Canvas / WebGL"
-                else -> "HTML5 / WebGL / JavaScript"
+                isConstruct -> "Construct 2/3 HTML5"
+                isPhaser -> "Phaser.io HTML5 Game"
+                isPixi -> "PixiJS WebGL Canvas"
+                else -> "HTML5 / WebGL Game"
             }
 
             return EngineDetectionResult(
-                engineType = EngineType.HTML5,
+                engineType = EngineType.HTML,
                 engineName = variant,
-                version = "Standard Web Standards",
-                confidence = 0.90f,
+                version = "HTML5 / WebGL2 / ECMAScript 6",
+                platform = "Universal Web / Chromium",
+                confidence = 0.92f,
                 mainExecutable = indexHtml,
-                architecture = "Universal (JavaScript / WebGL)",
-                signatureFiles = listOf(indexHtml) + fileList.filter { it.endsWith(".js", ignoreCase = true) }.take(3),
-                notes = "Direct native WebView / Chromium high-speed Canvas execution ready."
+                detectedFiles = matched.distinct().take(6),
+                runtimeRequired = "HTML5 / WebGL Native Core",
+                isDirectlyPlayable = true,
+                notes = "Hardware-accelerated Chromium WebGL2 and Canvas engine ready for direct execution."
             )
         }
         return null
     }
 }
 
-class GameMakerPlugin : EngineSignaturePlugin {
-    override val engineType: EngineType = EngineType.GAMEMAKER
+// 8. GENERIC WINDOWS EXECUTABLE DETECTOR
+class GenericWindowsPlugin : EngineSignaturePlugin {
+    override val engineType: EngineType = EngineType.WINDOWS_UNKNOWN
 
     override fun detect(gameDir: File, fileList: List<String>): EngineDetectionResult? {
-        val lowerFiles = fileList.map { it.lowercase() }
-        if (lowerFiles.any { it.endsWith("data.win") || it.endsWith("audiogroup1.dat") || it.endsWith("game.unx") }) {
+        val exeFiles = fileList.filter { it.endsWith(".exe", ignoreCase = true) }
+        val dllFiles = fileList.filter { it.endsWith(".dll", ignoreCase = true) }
+
+        if (exeFiles.isNotEmpty() || dllFiles.isNotEmpty()) {
+            val detected = (exeFiles + dllFiles).take(6)
+            val mainExe = exeFiles.firstOrNull() ?: dllFiles.first()
+
             return EngineDetectionResult(
-                engineType = EngineType.GAMEMAKER,
-                engineName = "GameMaker Studio",
-                version = "GMS 1.4 / 2.x",
-                confidence = 0.94f,
-                mainExecutable = fileList.firstOrNull { it.endsWith(".exe", ignoreCase = true) } ?: "data.win",
-                architecture = "x86 PE Binary / GMS Bytecode",
-                signatureFiles = fileList.filter { it.endsWith("data.win", ignoreCase = true) || it.endsWith(".dat", ignoreCase = true) },
-                notes = "Requires GameMaker Runner runtime or Wine layer."
+                engineType = EngineType.WINDOWS_UNKNOWN,
+                engineName = "Windows Executable (.exe)",
+                version = "Win32 / Win64 PE Binary",
+                platform = "Windows x86/x64",
+                confidence = 0.90f,
+                mainExecutable = mainExe,
+                detectedFiles = detected,
+                runtimeRequired = "Windows Compatibility Runtime Required",
+                isDirectlyPlayable = false,
+                notes = "Windows binary (.exe/.dll) detected. Android cannot run Windows PE executables natively without x86 emulation and Win32 translation layers."
             )
         }
         return null
@@ -246,17 +549,19 @@ class GameMakerPlugin : EngineSignaturePlugin {
 
 object EngineDetector {
     private val plugins: List<EngineSignaturePlugin> = listOf(
-        RpgMakerPlugin(),
+        RpgMakerHtmlPlugin(),
+        RpgMakerRgssPlugin(),
         RenPyPlugin(),
         UnityPlugin(),
         GodotPlugin(),
-        GameMakerPlugin(),
-        Html5Plugin()
+        AndroidApkPlugin(),
+        HtmlPlugin(),
+        GenericWindowsPlugin()
     )
 
     fun detect(gameDir: File): EngineDetectionResult {
         val fileList = mutableListOf<String>()
-        collectRelativePaths(gameDir, "", fileList, maxDepth = 4, maxFiles = 300)
+        collectRelativePaths(gameDir, "", fileList, maxDepth = 5, maxFiles = 500)
 
         for (plugin in plugins) {
             val result = plugin.detect(gameDir, fileList)
@@ -265,17 +570,39 @@ object EngineDetector {
             }
         }
 
-        // Fallback for custom or unknown
-        val executable = fileList.firstOrNull { it.endsWith(".exe", ignoreCase = true) || it.endsWith(".apk", ignoreCase = true) || it.endsWith(".html", ignoreCase = true) } ?: "unknown"
+        val firstFile = fileList.firstOrNull() ?: "unknown"
         return EngineDetectionResult(
-            engineType = EngineType.CUSTOM,
-            engineName = "Custom / Native Executable",
-            version = "Generic",
-            confidence = 0.50f,
-            mainExecutable = executable,
-            architecture = "Unknown",
-            signatureFiles = fileList.take(3),
-            notes = "No standard engine signatures detected. Manual adapter configuration required."
+            engineType = EngineType.UNKNOWN,
+            engineName = "Unknown Game / Project",
+            version = "Unrecognized Format",
+            platform = "Unknown",
+            confidence = 0.35f,
+            mainExecutable = firstFile,
+            detectedFiles = fileList.take(4),
+            runtimeRequired = "Unsupported / Custom Adapter Required",
+            isDirectlyPlayable = false,
+            notes = "No recognized game engine signatures detected. Please verify game directory structure."
+        )
+    }
+
+    fun detectFromFiles(fileList: List<String>): EngineDetectionResult {
+        for (plugin in plugins) {
+            val result = plugin.detect(File("."), fileList)
+            if (result != null) {
+                return result
+            }
+        }
+        return EngineDetectionResult(
+            engineType = EngineType.UNKNOWN,
+            engineName = "Unknown Game / Project",
+            version = "Unrecognized Format",
+            platform = "Unknown",
+            confidence = 0.35f,
+            mainExecutable = fileList.firstOrNull() ?: "unknown",
+            detectedFiles = fileList.take(4),
+            runtimeRequired = "Unsupported / Custom Adapter Required",
+            isDirectlyPlayable = false,
+            notes = "No recognized game engine signatures detected."
         )
     }
 

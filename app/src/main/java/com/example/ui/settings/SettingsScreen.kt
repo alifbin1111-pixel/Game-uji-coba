@@ -174,6 +174,65 @@ fun SettingsScreen(
                 }
             }
 
+            // Global Live Localization Settings
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = SophisticatedCard),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, SophisticatedBorder),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(SophisticatedBadge),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Info, null, tint = LavenderPrimary, modifier = Modifier.size(22.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text("MTool Live Localization Engine", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        }
+
+                        Text(
+                            text = "Intercepts RPG Maker (MV/MZ), HTML5 Canvas 2D/WebGL, and DOM render calls dynamically to replace Japanese text in-place with Indonesian or English.",
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(SophisticatedSurfaceVariant)
+                                .padding(12.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                InfoRow("Total Cached Translation Pairs:", "$totalTranslations Entries")
+                                InfoRow("Supported Text Contexts:", "Dialog, Menus, Battle UI, Canvas, DOM")
+                                InfoRow("Translation Latency (L1 Cache):", "0 ms (Instant in-memory)")
+                            }
+                        }
+
+                        Button(
+                            onClick = { viewModel.clearTranslationCache(null) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SophisticatedSurfaceVariant,
+                                contentColor = TextPrimary
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().testTag("btn_clear_all_trans_cache")
+                        ) {
+                            Text("Clear All Local Translation Database", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+
             // Storage Maintenance
             item {
                 Card(

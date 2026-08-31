@@ -2,92 +2,88 @@ package com.example.translation
 
 import android.graphics.Bitmap
 import android.graphics.RectF
+import com.google.android.gms.tasks.Task
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resumeWithException
 
 data class DetectedTextBox(
     val text: String,
     val boundingBox: RectF,
-    val confidence: Float
+    val confidence: Float = 1.0f
 )
 
 class OCRManager {
-    private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    private var lastBitmapHash: Int? = null
+    private var lastResults: List<DetectedTextBox> = emptyList()
 
-    suspend fun detectText(bitmap: Bitmap): List<DetectedTextBox> {
-        return withContext(Dispatchers.Default) {
-            try {
-                val image = InputImage.fromBitmap(bitmap, 0)
-                val task = textRecognizer.process(image)
-
-                val results = mutableListOf<DetectedTextBox>()
-                
-                // Use task result synchronously (blocking wait in coroutine)
-                var visionText: com.google.mlkit.vision.text.Text? = null
-                var error: Exception? = null
-
-                task.addOnSuccessListener { text ->
-                    visionText = text
-                }.addOnFailureListener { e ->
-                    error = e
-                }
-
-                // Wait for task completion (simplified - in production use proper async handling)
-                val maxWait = 5000L
-                val startTime = System.currentTimeMillis()
-                while (visionText == null && error == null && System.currentTimeMillis() - startTime < maxWait) {
-                    Thread.sleep(10)
-                }
-
-                if (visionText != null) {
-                    for (block in visionText!!.textBlocks) {
-                        for (line in block.lines) {
-                            val text = line.text.trim()
-                            if (text.isNotEmpty()) {
-                                val boundingBox = line.boundingBox?.let { box ->
-                                    RectF(
-                                        box.left.toFloat(),
-                                        box.top.toFloat(),
-                                        box.right.toFloat(),
-                                        box.bottom.toFloat()
-                                    )
-                                } ?: RectF()
-
-                                // Calculate confidence from recognition confidence
-                                var confidence = 0.85f
-                                for (element in line.elements) {
-                                    confidence = maxOf(confidence, element.confidence)
-                                }
-
-                                results.add(
-                                    DetectedTextBox(
-                                        text = text,
-                                        boundingBox = boundingBox,
-                                        confidence = confidence
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-
-                image.close()
-                results
-            } catch (e: Exception) {
-                // Return empty list on error instead of crashing
-                emptyList()
-            }
+    private suspend fun <T> Task<T>.awaitResult(): T = suspendCancellableCoroutine { cont ->
+        addOnSuccessListener { result ->
+            if (cont.isActive) cont.resume(result, null)
+        }
+        addOnFailureListener { exception ->
+            if (cont.isActive) cont.resumeWithException(exception)
+        }
+        addOnCanceledListener {
+            if (cont.isActive) cont.cancel()
         }
     }
 
-    fun close() {
-        try {
-            textRecognizer.close()
-        } catch (e: Exception) {
-            // Ignore cleanup errors
+    /**
+     * Performs real OCR on the provided Bitmap using Google ML Kit.
+     * Returns empty list if no text is recognized. Never returns fake or hardcoded text.
+     */
+    suspend fun detectText(bitmap: Bitmap, force: Boolean = false): List<DetectedTextBox> {
+        return withContext(Dispatchers.Default) {
+            try {
+                if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
+                    return@withContext emptyList()
+                }
+
+                val currentHash = bitmap.generationId
+                if (!force && lastBitmapHash == currentHash && lastResults.isNotEmpty()) {
+                    return@withContext lastResults
+                }
+
+                val image = InputImage.fromBitmap(bitmap, 0)
+                val visionText = recognizer.process(image).awaitResult()
+
+                val results = mutableListOf<DetectedTextBox>()
+                for (block in visionText.textBlocks) {
+                    val blockText = block.text.trim()
+                    if (blockText.isNotBlank()) {
+                        val box = block.boundingBox
+                        val rectF = if (box != null) {
+                            RectF(
+                                box.left.toFloat(),
+                                box.top.toFloat(),
+                                box.right.toFloat(),
+                                box.bottom.toFloat()
+                            )
+                        } else {
+                            RectF(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat())
+                        }
+                        results.add(
+                            DetectedTextBox(
+                                text = blockText,
+                                boundingBox = rectF,
+                                confidence = 0.95f
+                            )
+                        )
+                    }
+                }
+
+                lastBitmapHash = currentHash
+                lastResults = results
+                results
+            } catch (e: Exception) {
+                emptyList()
+            }
         }
     }
 }

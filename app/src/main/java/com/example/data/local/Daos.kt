@@ -99,6 +99,9 @@ interface SaveBackupDao {
     @Query("SELECT * FROM save_backups WHERE gameId = :gameId ORDER BY timestamp DESC")
     fun getBackupsForGame(gameId: String): Flow<List<SaveBackupEntity>>
 
+    @Query("SELECT * FROM save_backups WHERE id = :id LIMIT 1")
+    suspend fun getBackupById(id: String): SaveBackupEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertBackup(backup: SaveBackupEntity)
 

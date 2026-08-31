@@ -1,264 +1,197 @@
 package com.example.engine
 
 import android.content.Context
-import android.os.Environment
-import com.example.model.GameEntity
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
+import com.example.model.GameInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.io.File
-import java.util.UUID
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
 
-/**
- * GameScanner - Recursively scans directories for game installations
- * Handles:
- * - Recursive directory traversal
- * - Permission-safe file access
- * - Symbolic link detection (avoids infinite loops)
- * - Caching/build folder exclusion
- * - Executable & engine file detection
- */
-class GameScanner(private val context: Context) {
+object GameScanner {
 
-    companion object {
-        // Directories to skip
-        private val SKIP_PATTERNS = listOf(
-            "cache", "temp", ".tmp", ".gradle", ".build",
-            "__pycache__", "node_modules", ".git", ".svn",
-            ".metadata", "build", "dist", "out", "bin",
-            "Thumbs.db", ".DS_Store", "System Volume Information"
+    // Ignored system folders during recursive scanning
+    private val IGNORED_DIRECTORIES = setOf(
+        ".git", ".svn", ".gradle", "android/data", "android/obb", "cache", ".thumbnails", ".trash"
+    )
+
+    /**
+     * Recursively scans a local File directory and returns detailed GameInfo
+     */
+    suspend fun scanDirectory(dir: File, customTitle: String? = null): GameInfo = withContext(Dispatchers.IO) {
+        val totalSize = calculateDirSize(dir)
+        val detection = EngineDetector.detect(dir)
+        val extractedTitle = extractTitleFromMetadata(dir)
+        val finalTitle = customTitle ?: extractedTitle ?: dir.name.replace("_", " ").replace("-", " ")
+
+        detection.toGameInfo(
+            gamePath = dir.absolutePath,
+            title = finalTitle,
+            totalSizeBytes = totalSize
         )
-
-        // Max recursion depth to avoid performance issues
-        private const val MAX_DEPTH = 6
-
-        // Max files to scan
-        private const val MAX_FILES = 500
     }
 
     /**
-     * Scan a directory for games
-     * Returns list of detected GameEntity objects
+     * Scans an imported ZIP stream, extracts to target destination, and performs engine analysis
      */
-    suspend fun scanDirectory(
-        dir: File,
-        onProgress: ((current: Int, total: Int) -> Unit)? = null
-    ): List<GameEntity> = withContext(Dispatchers.IO) {
-        val results = mutableListOf<GameEntity>()
-        val scannedFiles = mutableSetOf<String>()
-        val visitedPaths = mutableSetOf<String>()
+    suspend fun scanAndExtractZip(
+        context: Context,
+        inputStream: InputStream,
+        originalFileName: String,
+        targetDir: File
+    ): Pair<GameInfo, Long> = withContext(Dispatchers.IO) {
+        if (!targetDir.exists()) targetDir.mkdirs()
 
-        try {
-            if (dir.exists() && dir.isDirectory && dir.canRead()) {
-                scanDirectoryRecursive(
-                    dir,
-                    results,
-                    scannedFiles,
-                    visitedPaths,
-                    depth = 0,
-                    onProgress = onProgress
-                )
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("GameScanner", "Error scanning directory: ${e.message}")
-        }
+        var totalBytes = 0L
+        ZipInputStream(BufferedInputStream(inputStream)).use { zis ->
+            var entry: ZipEntry? = zis.nextEntry
+            while (entry != null) {
+                val newFile = File(targetDir, entry.name)
+                // Zip Slip protection
+                if (!newFile.canonicalPath.startsWith(targetDir.canonicalPath)) {
+                    throw SecurityException("Zip entry is outside of target directory: ${entry.name}")
+                }
 
-        results
-    }
-
-    /**
-     * Scan a single directory (not recursive) for game files
-     */
-    suspend fun scanSingleDirectory(dir: File): GameEntity? = withContext(Dispatchers.IO) {
-        try {
-            if (!dir.exists() || !dir.isDirectory || !dir.canRead()) {
-                return@withContext null
-            }
-
-            val fileList = mutableListOf<String>()
-            collectRelativePaths(dir, "", fileList, maxDepth = 3, maxFiles = 300)
-
-            val detection = EngineDetector.detect(dir)
-            if (detection.engineType.name != "CUSTOM") {
-                GameEntity(
-                    id = UUID.randomUUID().toString().take(8),
-                    title = dir.name.replace("_", " ").replace("-", " "),
-                    gamePath = dir.absolutePath,
-                    engineType = detection.engineType.name,
-                    engineVersion = detection.version,
-                    confidence = detection.confidence,
-                    executablePath = detection.mainExecutable,
-                    fileSizeBytes = calculateDirSize(dir),
-                    addedAt = System.currentTimeMillis()
-                )
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("GameScanner", "Error scanning single directory: ${e.message}")
-            null
-        }
-    }
-
-    /**
-     * Scan External Storage for games (Documents, Downloads, etc)
-     */
-    suspend fun scanExternalStorage(
-        onProgress: ((current: Int, total: Int) -> Unit)? = null
-    ): List<GameEntity> = withContext(Dispatchers.IO) {
-        val results = mutableListOf<GameEntity>()
-
-        val externalDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-        if (externalDir.exists() && externalDir.canRead()) {
-            scanDirectory(externalDir, onProgress)
-        }
-
-        results
-    }
-
-    private fun scanDirectoryRecursive(
-        dir: File,
-        results: MutableList<GameEntity>,
-        scannedFiles: MutableSet<String>,
-        visitedPaths: MutableSet<String>,
-        depth: Int = 0,
-        onProgress: ((current: Int, total: Int) -> Unit)? = null
-    ) {
-        // Stop if max depth reached
-        if (depth > MAX_DEPTH) return
-        if (results.size >= MAX_FILES) return
-
-        try {
-            // Avoid symbolic links and infinite loops
-            val canonicalPath = dir.canonicalPath
-            if (visitedPaths.contains(canonicalPath)) return
-            visitedPaths.add(canonicalPath)
-
-            // Check if directory should be skipped
-            if (shouldSkipDirectory(dir)) return
-
-            val files = dir.listFiles() ?: return
-            onProgress?.invoke(results.size, MAX_FILES)
-
-            for (file in files) {
-                try {
-                    when {
-                        file.isDirectory && file.canRead() -> {
-                            // Check if it's a game directory
-                            val gameEntity = scanSingleDirectory(file)
-                            if (gameEntity != null) {
-                                if (!scannedFiles.contains(gameEntity.gamePath)) {
-                                    results.add(gameEntity)
-                                    scannedFiles.add(gameEntity.gamePath)
-                                    onProgress?.invoke(results.size, MAX_FILES)
-                                }
-                            } else {
-                                // Recurse into subdirectory
-                                if (results.size < MAX_FILES) {
-                                    scanDirectoryRecursive(
-                                        file,
-                                        results,
-                                        scannedFiles,
-                                        visitedPaths,
-                                        depth + 1,
-                                        onProgress
-                                    )
-                                }
-                            }
+                if (entry.isDirectory) {
+                    newFile.mkdirs()
+                } else {
+                    newFile.parentFile?.mkdirs()
+                    FileOutputStream(newFile).use { fos ->
+                        val buffer = ByteArray(8192)
+                        var len: Int
+                        while (zis.read(buffer).also { len = it } > 0) {
+                            fos.write(buffer, 0, len)
+                            totalBytes += len
                         }
                     }
-                } catch (e: Exception) {
-                    // Skip files/directories that can't be read
-                    continue
                 }
+                zis.closeEntry()
+                entry = zis.nextEntry
             }
-        } catch (e: Exception) {
-            android.util.Log.e("GameScanner", "Error in recursive scan: ${e.message}")
         }
+
+        val detection = EngineDetector.detect(targetDir)
+        val extractedTitle = extractTitleFromMetadata(targetDir)
+        val cleanTitle = extractedTitle ?: originalFileName.substringBeforeLast(".").replace("_", " ").replace("-", " ")
+        val gameInfo = detection.toGameInfo(
+            gamePath = targetDir.absolutePath,
+            title = cleanTitle.ifBlank { detection.engineName },
+            totalSizeBytes = totalBytes
+        )
+
+        Pair(gameInfo, totalBytes)
     }
 
     /**
-     * Check if directory should be skipped
+     * Scans a single chosen file (e.g. .apk, .exe, .html, .json, .pck)
      */
-    private fun shouldSkipDirectory(dir: File): Boolean {
-        val dirName = dir.name.lowercase()
-        return SKIP_PATTERNS.any { dirName.contains(it, ignoreCase = true) }
+    suspend fun scanSingleFile(
+        context: Context,
+        file: File,
+        originalFileName: String
+    ): GameInfo = withContext(Dispatchers.IO) {
+        val relList = listOf(file.name)
+        val detection = EngineDetector.detectFromFiles(relList)
+        val cleanTitle = originalFileName.substringBeforeLast(".").replace("_", " ").replace("-", " ")
+
+        detection.toGameInfo(
+            gamePath = file.absolutePath,
+            title = cleanTitle.ifBlank { originalFileName },
+            totalSizeBytes = file.length()
+        )
     }
 
     /**
-     * Collect relative file paths for engine detection
+     * Recursively scans DocumentFile tree from Android Storage Access Framework (SAF)
      */
-    private fun collectRelativePaths(
-        dir: File,
+    suspend fun scanDocumentTree(
+        context: Context,
+        treeUri: Uri
+    ): List<String> = withContext(Dispatchers.IO) {
+        val fileList = mutableListOf<String>()
+        val rootDoc = DocumentFile.fromTreeUri(context, treeUri) ?: return@withContext emptyList()
+        collectDocumentPaths(rootDoc, "", fileList, maxDepth = 5, maxFiles = 300)
+        fileList
+    }
+
+    private fun collectDocumentPaths(
+        doc: DocumentFile,
         currentPrefix: String,
         result: MutableList<String>,
         maxDepth: Int,
         maxFiles: Int
     ) {
-        if (maxDepth <= 0 || result.size >= maxFiles || !dir.exists() || !dir.isDirectory) return
+        if (maxDepth <= 0 || result.size >= maxFiles || !doc.exists()) return
 
+        val files = doc.listFiles()
+        for (f in files) {
+            val name = f.name ?: continue
+            if (IGNORED_DIRECTORIES.contains(name.lowercase())) continue
+            val relPath = if (currentPrefix.isEmpty()) name else "$currentPrefix/$name"
+            result.add(relPath)
+            if (f.isDirectory) {
+                collectDocumentPaths(f, relPath, result, maxDepth - 1, maxFiles)
+            }
+            if (result.size >= maxFiles) break
+        }
+    }
+
+    private fun extractTitleFromMetadata(dir: File): String? {
         try {
-            val files = dir.listFiles() ?: return
-            for (f in files) {
-                if (result.size >= maxFiles) break
+            // 1. Check RPG Maker data/System.json
+            val systemJsonFile = File(dir, "data/System.json").takeIf { it.exists() }
+                ?: File(dir, "www/data/System.json").takeIf { it.exists() }
+            if (systemJsonFile != null) {
+                val json = JSONObject(systemJsonFile.readText(Charsets.UTF_8))
+                val title = json.optString("gameTitle", "")
+                if (title.isNotBlank()) return title
+            }
 
-                val relPath = if (currentPrefix.isEmpty()) f.name else "$currentPrefix/${f.name}"
-                result.add(relPath)
+            // 2. Check package.json
+            val packageJsonFile = File(dir, "package.json").takeIf { it.exists() }
+                ?: File(dir, "www/package.json").takeIf { it.exists() }
+            if (packageJsonFile != null) {
+                val json = JSONObject(packageJsonFile.readText(Charsets.UTF_8))
+                val windowObj = json.optJSONObject("window")
+                val windowTitle = windowObj?.optString("title", "")
+                if (!windowTitle.isNullOrBlank()) return windowTitle
+                val name = json.optString("name", "")
+                if (name.isNotBlank()) return name
+            }
 
-                if (f.isDirectory && f.canRead() && !shouldSkipDirectory(f)) {
-                    collectRelativePaths(f, relPath, result, maxDepth - 1, maxFiles)
+            // 3. Check Game.ini (RGSS)
+            val gameIniFile = File(dir, "Game.ini").takeIf { it.exists() }
+                ?: File(dir, "game.ini").takeIf { it.exists() }
+            if (gameIniFile != null) {
+                gameIniFile.useLines { lines ->
+                    for (line in lines) {
+                        val trimmed = line.trim()
+                        if (trimmed.startsWith("Title=", ignoreCase = true)) {
+                            val title = trimmed.substringAfter("=").trim()
+                            if (title.isNotBlank()) return title
+                        }
+                    }
                 }
             }
         } catch (e: Exception) {
-            // Ignore permission errors
+            // ignore
         }
+        return null
     }
 
-    /**
-     * Calculate total directory size recursively
-     */
     private fun calculateDirSize(dir: File): Long {
         var size = 0L
-        try {
-            val files = dir.listFiles() ?: return 0L
-            for (f in files) {
-                size += if (f.isDirectory) calculateDirSize(f) else f.length()
-            }
-        } catch (e: Exception) {
-            // Ignore errors
+        val files = dir.listFiles() ?: return 0L
+        for (f in files) {
+            if (IGNORED_DIRECTORIES.contains(f.name.lowercase())) continue
+            size += if (f.isDirectory) calculateDirSize(f) else f.length()
         }
         return size
-    }
-
-    /**
-     * Detect game platform from file paths and engine type
-     */
-    fun detectPlatform(engineType: String, filePaths: List<String>): String {
-        val lowerPaths = filePaths.map { it.lowercase() }
-        return when {
-            lowerPaths.any { it.endsWith(".exe") } -> "Windows"
-            lowerPaths.any { it.endsWith(".apk") } -> "Android"
-            lowerPaths.any { it.contains("libunity.so") } -> "Android"
-            lowerPaths.any { it.endsWith(".pck") } -> when {
-                engineType.contains("HTML5") -> "Web"
-                else -> "Unknown"
-            }
-            lowerPaths.any { it.endsWith("index.html") } -> "Web"
-            else -> "Unknown"
-        }
-    }
-
-    /**
-     * Detect architecture from file paths
-     */
-    fun detectArchitecture(filePaths: List<String>): String {
-        val lowerPaths = filePaths.map { it.lowercase() }
-        return when {
-            lowerPaths.any { it.contains("arm64") || it.contains("aarch64") } -> "ARM64-v8a"
-            lowerPaths.any { it.contains("armv7") || it.contains("armeabi") } -> "ARMv7-a"
-            lowerPaths.any { it.contains("x86_64") } -> "x86_64"
-            lowerPaths.any { it.contains("x86") } -> "x86"
-            lowerPaths.any { it.contains("x64") } -> "x86_64"
-            else -> "Unknown"
-        }
     }
 }

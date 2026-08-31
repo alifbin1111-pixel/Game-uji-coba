@@ -12,6 +12,8 @@ import com.example.model.ControllerProfileEntity
 import com.example.model.GameEntity
 import com.example.model.GameSettingsEntity
 import com.example.model.SaveBackupEntity
+import com.example.runtime.GameLauncher
+import com.example.runtime.LaunchResult
 import com.example.save.SaveManager
 import com.example.translation.TranslationManager
 import kotlinx.coroutines.flow.Flow
@@ -30,7 +32,7 @@ class GameBridgeViewModel(application: Application) : AndroidViewModel(applicati
     val repository = GameRepository(database)
     private val importer = GameImporter(application, repository)
     private val saveManager = SaveManager(application, repository)
-    private val translationManager = TranslationManager(repository)
+    val translationManager = TranslationManager(repository)
 
     val allGames: StateFlow<List<GameEntity>> = repository.allGames
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -56,6 +58,9 @@ class GameBridgeViewModel(application: Application) : AndroidViewModel(applicati
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage = _statusMessage.asStateFlow()
 
+    private val _launchDialog = MutableStateFlow<LaunchResult.RuntimeRequired?>(null)
+    val launchDialog = _launchDialog.asStateFlow()
+
     // Filtered games combining search and engine type
     val filteredGames: StateFlow<List<GameEntity>> = combine(
         allGames,
@@ -63,8 +68,12 @@ class GameBridgeViewModel(application: Application) : AndroidViewModel(applicati
         selectedEngineFilter
     ) { games, query, filter ->
         games.filter { game ->
-            val matchesQuery = query.isBlank() || game.title.contains(query, ignoreCase = true) || game.engineType.contains(query, ignoreCase = true)
-            val matchesEngine = filter == "ALL" || game.engineType.contains(filter, ignoreCase = true) || (filter == "RPG_MAKER" && game.engineType.startsWith("RPG_MAKER"))
+            val matchesQuery = query.isBlank() ||
+                    game.title.contains(query, ignoreCase = true) ||
+                    game.engineType.contains(query, ignoreCase = true)
+            val matchesEngine = filter == "ALL" ||
+                    game.engineType.contains(filter, ignoreCase = true) ||
+                    (filter == "RPG_MAKER" && game.engineType.startsWith("RPG_MAKER"))
             matchesQuery && matchesEngine
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -83,8 +92,6 @@ class GameBridgeViewModel(application: Application) : AndroidViewModel(applicati
                     )
                 )
             }
-            // Auto install demo games for immediate out-of-the-box playability
-            DemoGamesBundler.installSampleGamesIfEmpty(application, repository)
         }
     }
 
@@ -98,6 +105,10 @@ class GameBridgeViewModel(application: Application) : AndroidViewModel(applicati
 
     fun clearStatusMessage() {
         _statusMessage.value = null
+    }
+
+    fun dismissLaunchDialog() {
+        _launchDialog.value = null
     }
 
     fun toggleFavorite(gameId: String, currentFavorite: Boolean) {
@@ -188,9 +199,37 @@ class GameBridgeViewModel(application: Application) : AndroidViewModel(applicati
             _isImporting.value = true
             try {
                 val game = importer.importFromZipStream(inputStream, filename)
-                _statusMessage.value = "Game '${game.title}' berhasil di-import (${game.engineType})!"
+                _statusMessage.value = "Game '${game.title}' terdeteksi: ${game.engineType} (${(game.confidence * 100).toInt()}% match)"
             } catch (e: Exception) {
                 _statusMessage.value = "Gagal mengimpor ZIP: ${e.localizedMessage}"
+            } finally {
+                _isImporting.value = false
+            }
+        }
+    }
+
+    fun importSingleFile(inputStream: InputStream, fileName: String) {
+        viewModelScope.launch {
+            _isImporting.value = true
+            try {
+                val game = importer.importSingleFile(inputStream, fileName)
+                _statusMessage.value = "File '${game.title}' dipindai: ${game.engineType} (${(game.confidence * 100).toInt()}% match)"
+            } catch (e: Exception) {
+                _statusMessage.value = "Gagal memindai file: ${e.localizedMessage}"
+            } finally {
+                _isImporting.value = false
+            }
+        }
+    }
+
+    fun importFolderTree(treeUri: Uri, folderName: String) {
+        viewModelScope.launch {
+            _isImporting.value = true
+            try {
+                val game = importer.importFromTreeUri(treeUri, folderName)
+                _statusMessage.value = "Folder '${game.title}' berhasil dipindai: ${game.engineType} (${(game.confidence * 100).toInt()}% match)"
+            } catch (e: Exception) {
+                _statusMessage.value = "Gagal memindai folder: ${e.localizedMessage}"
             } finally {
                 _isImporting.value = false
             }
@@ -202,11 +241,39 @@ class GameBridgeViewModel(application: Application) : AndroidViewModel(applicati
             _isImporting.value = true
             try {
                 val game = importer.importFromDirectory(dir)
-                _statusMessage.value = "Folder game '${game.title}' berhasil ditambahkan!"
+                _statusMessage.value = "Folder '${game.title}' dipindai: ${game.engineType} (${(game.confidence * 100).toInt()}% match)"
             } catch (e: Exception) {
                 _statusMessage.value = "Gagal memindai folder: ${e.localizedMessage}"
             } finally {
                 _isImporting.value = false
+            }
+        }
+    }
+
+    fun handlePlayClick(game: GameEntity, onDirectLaunch: (String) -> Unit) {
+        val result = GameLauncher.evaluateLaunch(getApplication(), game)
+        when (result) {
+            is LaunchResult.LaunchInWebView -> {
+                onDirectLaunch(game.id)
+            }
+            is LaunchResult.LaunchInstalledApp -> {
+                result.intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                getApplication<Application>().startActivity(result.intent)
+                updateLastPlayed(game.id)
+                _statusMessage.value = "Meluncurkan ${game.title}..."
+            }
+            is LaunchResult.LaunchApkInstall -> {
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(result.apkUri, "application/vnd.android.package-archive")
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                }
+                getApplication<Application>().startActivity(intent)
+            }
+            is LaunchResult.RuntimeRequired -> {
+                _launchDialog.value = result
+            }
+            is LaunchResult.Unsupported -> {
+                _statusMessage.value = "Tidak dapat dijalankan: ${result.reason}"
             }
         }
     }

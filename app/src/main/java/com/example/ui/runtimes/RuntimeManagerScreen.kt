@@ -37,10 +37,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.model.RuntimeStatus
+import com.example.model.RuntimeState
 import com.example.runtime.RuntimeManager
 import com.example.ui.theme.LavenderPrimary
-import com.example.ui.theme.LavenderVioletBrush
 import com.example.ui.theme.MutedRose
 import com.example.ui.theme.SoftAmber
 import com.example.ui.theme.SoftMint
@@ -57,7 +56,7 @@ import com.example.ui.theme.TextSecondary
 fun RuntimeManagerScreen(
     onBack: () -> Unit
 ) {
-    val runtimes = RuntimeManager.availableRuntimes
+    val runtimes = RuntimeManager.providers
 
     Scaffold(
         containerColor = SophisticatedBg,
@@ -83,7 +82,7 @@ fun RuntimeManagerScreen(
         ) {
             item {
                 Text(
-                    text = "ENGINE PLUGINS & RUNTIMES",
+                    text = "ENGINE RUNTIMES & COMPATIBILITY STATUS",
                     color = LavenderPrimary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
@@ -100,7 +99,7 @@ fun RuntimeManagerScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "GameBridge adopts a modular runtime architecture where different game engines (RPG Maker MV/MZ, Ren'Py, HTML5, Godot) execute inside optimized, sandboxed compatibility adapters.",
+                            text = "GameBridge menganalisis struktur file game secara realistis. Game berbasis web (RPG Maker MV/MZ & HTML5) dan Android Native dapat langsung dijalankan, sedangkan game Windows .exe dan RGSS memerlukan runtime compatibility container khusus.",
                             color = TextSecondary,
                             fontSize = 12.sp,
                             lineHeight = 18.sp
@@ -110,7 +109,7 @@ fun RuntimeManagerScreen(
             }
 
             items(runtimes, key = { it.id }) { runtime ->
-                val status = runtime.isAvailable()
+                val state = runtime.runtimeState
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -138,29 +137,28 @@ fun RuntimeManagerScreen(
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column {
-                                    Text(runtime.name, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text(runtime.name, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     Text("v${runtime.version}", color = TextSecondary, fontSize = 11.sp)
                                 }
                             }
 
                             // Status Tag
-                            val statusLabel = when (status) {
-                                RuntimeStatus.AVAILABLE_READY -> "READY"
-                                RuntimeStatus.AVAILABLE_ADAPTER -> "ACTIVE"
-                                RuntimeStatus.EXPERIMENTAL -> "EXPERIMENTAL"
-                                RuntimeStatus.REQUIRES_PLUGIN -> "NEEDS PLUGIN"
-                                RuntimeStatus.UNSUPPORTED_ON_DEVICE -> "UNSUPPORTED"
+                            val statusLabel = when (state) {
+                                RuntimeState.INSTALLED -> "INSTALLED"
+                                RuntimeState.NOT_INSTALLED -> "NOT INSTALLED"
+                                RuntimeState.UNSUPPORTED -> "UNSUPPORTED"
                             }
-                            val statusColor = when (status) {
-                                RuntimeStatus.AVAILABLE_READY, RuntimeStatus.AVAILABLE_ADAPTER -> SoftMint
-                                RuntimeStatus.EXPERIMENTAL, RuntimeStatus.REQUIRES_PLUGIN -> SoftAmber
-                                RuntimeStatus.UNSUPPORTED_ON_DEVICE -> MutedRose
+                            val statusColor = when (state) {
+                                RuntimeState.INSTALLED -> SoftMint
+                                RuntimeState.NOT_INSTALLED -> SoftAmber
+                                RuntimeState.UNSUPPORTED -> MutedRose
                             }
 
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(SophisticatedBadge)
+                                    .background(statusColor.copy(alpha = 0.15f))
+                                    .border(1.dp, statusColor.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
@@ -206,4 +204,3 @@ fun RuntimeManagerScreen(
         }
     }
 }
-

@@ -168,35 +168,59 @@ object DemoGamesBundler {
                         display: none; animation: fadeIn 0.2s;
                     }
                     #speakerName { font-weight: bold; color: #00e5ff; font-size: 14px; margin-bottom: 4px; }
-                    #dialogText { font-size: 16px; line-height: 1.4; color: #f0f4fc; }
-                    #transNote { font-size: 11px; color: #b388ff; margin-top: 6px; }
-                    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+                    #dialogText { font-size: 15px; line-height: 1.4; color: #f0f4fc; }
+                    #dialogChoices { display: flex; gap: 8px; margin-top: 10px; }
+                    .choiceBtn { background: #1e293b; border: 1px solid #7c4dff; color: #fff; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; }
+                    .choiceBtn:active { background: #7c4dff; }
+                    #inGameMenu { position: absolute; top: 12px; right: 12px; background: rgba(15,23,42,0.92); border: 2px solid #7c4dff; border-radius: 10px; padding: 10px; width: 150px; display: none; }
+                    .menuItem { padding: 6px 10px; color: #e2e8f0; font-size: 13px; border-bottom: 1px solid #334155; cursor: pointer; font-weight: 500; }
+                    .menuItem:hover, .menuItem:active { color: #00e5ff; background: rgba(124,77,255,0.2); }
+                    #hudBar { position: absolute; top: 10px; left: 10px; background: rgba(15,23,42,0.8); padding: 4px 10px; border-radius: 6px; font-size: 11px; color: #94a3b8; border: 1px solid #334155; }
                 </style>
             </head>
             <body>
                 <div id="canvasContainer">
                     <canvas id="gameCanvas" width="640" height="400"></canvas>
+                    <div id="hudBar">RPG Maker MV Engine Core | MTool Live Localization Active</div>
                     <div id="dialogBox">
-                        <div id="speakerName">長老 (Village Elder)</div>
-                        <div id="dialogText">勇者よ、目覚めの時が来た。古代のダンジョンへ向かい、クリスタルを取り戻すのだ！</div>
-                        <div id="transNote">⚡ GameBridge Translation Active [JA ➔ ID]</div>
+                        <div id="speakerName">村の長老 (Elder)</div>
+                        <div id="dialogText">「勇者よ、目覚めの時が来た！古代の洞窟へ向かい、聖なる剣を探すのだ。」</div>
+                        <div id="dialogChoices">
+                            <button class="choiceBtn" onclick="chooseOption('はい')">はい (Ya)</button>
+                            <button class="choiceBtn" onclick="chooseOption('いいえ')">いいえ (Tidak)</button>
+                        </div>
+                    </div>
+                    <div id="inGameMenu">
+                        <div class="menuItem" onclick="showDialog('アイテム (Item)', '「所持アイテム: やくそうx3, まほうのせいすいx1」')">アイテム</div>
+                        <div class="menuItem" onclick="showDialog('スキル (Skill)', '「習得スキル: ファイア, ヒール」')">スキル</div>
+                        <div class="menuItem" onclick="showDialog('装備 (Equip)', '「装備: はがねのつるぎ, かわのよろい」')">装備</div>
+                        <div class="menuItem" onclick="showDialog('ステータス (Status)', '「Lv 12 | HP: 120/120 | MP: 45/45 | 攻撃力: 34」')">ステータス</div>
+                        <div class="menuItem" onclick="showDialog('セーブ (Save)', '「冒険の書にセーブしました！」')">セーブ</div>
+                        <div class="menuItem" onclick="toggleInGameMenu()">閉じる</div>
                     </div>
                 </div>
 
                 <script>
+                    // Simulate RPG Maker core structures for MTool Live Interceptor
+                    window.Bitmap = function() {};
+                    window.Bitmap.prototype.drawText = function(text, x, y, maxWidth, lineHeight, align) {
+                        ctx.fillText(text, x, y);
+                    };
+                    window.Window_Base = function() {};
+                    window.Window_Command = function() {};
+
                     const canvas = document.getElementById('gameCanvas');
                     const ctx = canvas.getContext('2d');
                     const dialogBox = document.getElementById('dialogBox');
                     const dialogText = document.getElementById('dialogText');
                     const speakerName = document.getElementById('speakerName');
+                    const inGameMenu = document.getElementById('inGameMenu');
 
-                    // Player state
                     let player = { x: 5, y: 4, size: 32, hp: 100, gold: 50 };
                     const tileSize = 40;
                     const mapWidth = 16;
                     const mapHeight = 10;
 
-                    // Map layout (0: grass, 1: wall/tree, 2: chest, 3: elder NPC, 4: dungeon door)
                     const map = [
                         [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
                         [1,0,0,0,0,1,0,0,0,0,0,0,0,2,0,1],
@@ -249,25 +273,47 @@ object DemoGamesBundler {
                         ctx.fill();
                         ctx.shadowBlur = 0;
 
-                        // Draw HUD
-                        ctx.fillStyle = '#ffffff';
-                        ctx.font = '12px sans-serif';
-                        ctx.fillText('HP: ' + player.hp + ' | Gold: ' + player.gold + ' | Engine: RPG Maker MV JS Core', 15, 20);
+                        // Canvas RPG Title overlay button simulation
+                        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+                        ctx.fillRect(450, 20, 170, 70);
+                        ctx.strokeStyle = '#7c4dff';
+                        ctx.strokeRect(450, 20, 170, 70);
+                        ctx.fillStyle = '#00e5ff';
+                        ctx.font = 'bold 12px sans-serif';
+                        ctx.fillText('所持金: ' + player.gold + ' G', 465, 45);
+                        ctx.fillStyle = '#f8fafc';
+                        ctx.font = '11px sans-serif';
+                        ctx.fillText('コマンド: Xキーでメニュー', 465, 68);
                     }
 
                     function showDialog(speaker, text) {
                         speakerName.innerText = speaker;
                         dialogText.innerText = text;
                         dialogBox.style.display = 'block';
-
-                        // Notify native Android bridge of extracted text for live translation
                         if (window.GameBridgeNative) {
-                            window.GameBridgeNative.onTextExtracted(text, 'ja');
+                            window.GameBridgeNative.onCaptureText(text, 'DIALOG');
                         }
                     }
 
                     function hideDialog() {
                         dialogBox.style.display = 'none';
+                    }
+
+                    function toggleInGameMenu() {
+                        if (inGameMenu.style.display === 'block') {
+                            inGameMenu.style.display = 'none';
+                        } else {
+                            inGameMenu.style.display = 'block';
+                        }
+                    }
+
+                    function chooseOption(choice) {
+                        hideDialog();
+                        if (choice === 'はい') {
+                            showDialog('村の長老 (Elder)', '「よく言ってくれた！さあ、この回復薬を受け取って出発せよ！」');
+                        } else {
+                            showDialog('村の長老 (Elder)', '「無理はするな。準備ができたらまた声をかけてくれ。」');
+                        }
                     }
 
                     function move(dx, dy) {
@@ -279,7 +325,7 @@ object DemoGamesBundler {
                         const ny = player.y + dy;
                         if (nx >= 0 && nx < mapWidth && ny >= 0 && ny < mapHeight) {
                             const target = map[ny][nx];
-                            if (target === 1) return; // Wall
+                            if (target === 1) return;
                             if (target === 3) {
                                 showDialog('村の長老 (Elder)', '「勇者よ、よくぞ来た！魔王を倒すため、聖なる剣を受け取るがよい！」');
                                 return;
@@ -308,7 +354,6 @@ object DemoGamesBundler {
                         if (dialogBox.style.display === 'block') {
                             hideDialog();
                         } else {
-                            // Check adjacent tiles
                             const coords = [[0,-1], [0,1], [-1,0], [1,0]];
                             for (let c of coords) {
                                 const checkX = player.x + c[0];
@@ -324,16 +369,16 @@ object DemoGamesBundler {
                         }
                     }
 
-                    // Native GamePad Input Handler
+                    // Native GamePad & Keyboard Handler
                     window.addEventListener('keydown', (e) => {
                         if (e.key === 'ArrowUp' || e.key === 'w') move(0, -1);
                         if (e.key === 'ArrowDown' || e.key === 's') move(0, 1);
                         if (e.key === 'ArrowLeft' || e.key === 'a') move(-1, 0);
                         if (e.key === 'ArrowRight' || e.key === 'd') move(1, 0);
                         if (e.key === 'Enter' || e.key === 'z' || e.key === ' ') interact();
+                        if (e.key === 'Escape' || e.key === 'x') toggleInGameMenu();
                     });
 
-                    // Touch on canvas
                     canvas.addEventListener('click', (e) => {
                         const rect = canvas.getBoundingClientRect();
                         const clickX = Math.floor((e.clientX - rect.left) / (rect.width / mapWidth));
@@ -344,7 +389,6 @@ object DemoGamesBundler {
                         else if (dy !== 0) move(0, dy);
                     });
 
-                    // Virtual controller API exposed to Android Kotlin
                     window.GameBridgeController = {
                         pressUp: () => move(0, -1),
                         pressDown: () => move(0, 1),
@@ -352,12 +396,11 @@ object DemoGamesBundler {
                         pressRight: () => move(1, 0),
                         pressA: () => interact(),
                         pressB: () => hideDialog(),
-                        pressX: () => showDialog('メニュー (Menu)', '「アイテム: 回復薬x2, 聖剣x1 | 状態: 良好」'),
+                        pressX: () => toggleInGameMenu(),
                         pressY: () => showDialog('セーブ (Save)', '「進捗状況をスロット1に保存しました！」')
                     };
 
                     drawMap();
-                    // Initial welcome dialogue
                     setTimeout(() => {
                         showDialog('システム (System)', '「RPG Maker MV ランタイムが正常にロードされました。バーチャルコントローラーまたはタッチで操作できます。」');
                     }, 500);
